@@ -1,5 +1,14 @@
+import { Suspense } from 'react';
 import Header from "@/components/Header";
 import DocumentList from "@/components/DocumentList";
+
+function SearchFallback() {
+  return (
+    <div className="text-center py-20">
+      <div className="inline-block animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+    </div>
+  );
+}
 
 export default function Home() {
   return (
@@ -19,7 +28,9 @@ export default function Home() {
           </p>
         </div>
 
-        <DocumentList />
+        <Suspense fallback={<SearchFallback />}>
+          <DocumentList />
+        </Suspense>
       </main>
 
       <footer className="relative z-10 py-8 border-t border-white/5 text-center text-gray-500 text-sm">
