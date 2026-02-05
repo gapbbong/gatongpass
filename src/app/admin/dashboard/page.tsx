@@ -5,7 +5,8 @@ import { useState, useCallback, useEffect, Suspense, useRef } from 'react';
 import {
     LayoutDashboard, Users, FileText, Send, Upload,
     Settings, Bell, Search, CheckCircle, XCircle, MoreVertical, AlertTriangle,
-    Keyboard, ChevronRight, Filter, Download, ExternalLink, MousePointer2, Sparkles
+    Keyboard, ChevronRight, Filter, Download, ExternalLink, MousePointer2, Sparkles, BarChart3,
+    Plus
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
@@ -15,12 +16,15 @@ import { useDropzone } from 'react-dropzone';
 import DashboardLayout from '@/components/admin/DashboardLayout';
 import ActiveDocumentViewer from '@/components/admin/ActiveDocumentViewer';
 import SubmissionStats from '@/components/admin/SubmissionStats';
-import UploadModal from '@/components/admin/UploadModal';
+import CorrespondenceWizard from '@/components/admin/CorrespondenceWizard';
 
 // Services
 import { getDocuments } from '@/lib/docService';
 
 // Types
+import StudentListView from '@/components/admin/StudentListView';
+import { getStudentsWithSubmission, seedMockStudents } from '@/lib/studentService';
+
 export interface Document {
     id: string;
     title: string;
@@ -37,12 +41,34 @@ function AdminDashboardContent() {
     const searchParams = useSearchParams();
     const role = searchParams.get('role') || 'teacher';
 
-    const [activeTab, setActiveTab] = useState('dashboard');
     const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [loading, setLoading] = useState(true);
+
+    // View Mode: 'analytics' (default) or 'create' (wizard)
+    const [viewMode, setViewMode] = useState<'analytics' | 'create'>('analytics');
+    const [showStats, setShowStats] = useState(true);
+
+    // Student Data
+    const [students, setStudents] = useState<any[]>([]);
+    const [isStudentsLoading, setIsStudentsLoading] = useState(false);
+
+    const fetchStudents = useCallback(async () => {
+        setIsStudentsLoading(true);
+        // Assuming 3rd grade, 1st class for now
+        const data = await getStudentsWithSubmission('', 3, 1);
+        if (data && data.length > 0) {
+            setStudents(data);
+        } else {
+            const seeded = await seedMockStudents(3, 1);
+            if (seeded) setStudents(seeded.map(s => ({ ...s, submitted: false })));
+        }
+        setIsStudentsLoading(false);
+    }, []);
+
+    useEffect(() => {
+        fetchStudents();
+    }, [fetchStudents]);
 
     const fetchDocs = useCallback(async () => {
         try {
@@ -77,167 +103,181 @@ function AdminDashboardContent() {
 
                 if (nextIndex >= 0 && nextIndex < documents.length) {
                     setSelectedDocId(documents[nextIndex].id);
+                    setViewMode('analytics');
                 }
-            }
-
-            if (e.key === 'Escape') {
-                setSelectedDocId(null);
             }
         };
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [selectedDocId, documents]);
 
-    // Sidebar Content
+    // --- Column 1: Navigator (Sidebar) ---
     const sidebar = (
-        <div className="flex flex-col h-full mesh-gradient">
-            <div className="p-8">
+        <div className="flex flex-col h-full mesh-gradient relative">
+            {/* Header / Logo */}
+            <div className="p-6 pb-2">
                 <LinkLogo />
-                <div className="mt-8 flex items-center gap-4 p-3 rounded-2xl bg-white/[0.03] border border-white/[0.05]">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20 font-black text-white italic">K</div>
-                    <div>
-                        <p className="text-[11px] font-black text-white/90 truncate leading-none">경성전자고등학교</p>
-                        <div className="mt-1 flex items-center gap-1.5 ">
-                            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" />
-                            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest">{role === 'head' ? '학년 부장' : '담임 교사'}</p>
-                        </div>
-                    </div>
-                </div>
             </div>
 
-            <nav className="flex-1 px-4 space-y-1">
-                <NavItem icon={<LayoutDashboard size={20} />} label="대시보드" active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} />
-                <NavItem icon={<FileText size={20} />} label="통신문 보관함" active={activeTab === 'archive'} onClick={() => setActiveTab('archive')} />
-                <NavItem icon={<Users size={20} />} label="학급 명렬표" active={activeTab === 'students'} onClick={() => setActiveTab('students')} />
-                <NavItem icon={<Settings size={20} />} label="관리 설정" active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} />
-            </nav>
+            {/* Create Button */}
+            <div className="px-4 mt-6 mb-4">
+                <button
+                    onClick={() => {
+                        setSelectedDocId(null);
+                        setViewMode('create');
+                    }}
+                    className={cn(
+                        "w-full flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white p-4 rounded-2xl shadow-lg shadow-indigo-900/30 transition-all active:scale-[0.98] group relative z-[1000]",
+                        documents.length === 0 && "animate-breathe ring-4 ring-indigo-500/30"
+                    )}
+                >
+                    <div className="bg-white/20 p-1 rounded-lg">
+                        <Plus size={18} className="text-white" />
+                    </div>
+                    <span className="font-bold text-sm">새 가정통신문 만들기</span>
+                </button>
+            </div>
 
-            <div className="p-6 border-t border-white/[0.05] space-y-6">
-                <div className="bg-white/[0.02] rounded-2xl p-5 border border-white/[0.05] relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-2 opacity-5 rotate-12 group-hover:opacity-10 transition-opacity">
-                        <Keyboard size={48} />
+            {/* Document List Header */}
+            <div className="px-6 py-2 flex items-center justify-between text-xs text-gray-500 font-bold uppercase tracking-wider">
+                <span>Recent Documents</span>
+                <span className="bg-white/5 px-2 py-0.5 rounded text-[10px]">{documents.length}</span>
+            </div>
+
+            {/* Document List (Scrollable) */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-2 pb-4">
+                {documents.map((doc) => (
+                    <button
+                        key={doc.id}
+                        onClick={() => {
+                            setSelectedDocId(doc.id);
+                            setViewMode('analytics');
+                        }}
+                        className={cn(
+                            "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97] border",
+                            selectedDocId === doc.id
+                                ? "bg-white/[0.08] border-indigo-500/50 shadow-xl"
+                                : "bg-transparent border-transparent hover:bg-white/[0.03]"
+                        )}
+                    >
+                        <div className="flex justify-between items-start mb-2">
+                            <span className={cn(
+                                "text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest border",
+                                doc.type === 'action'
+                                    ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                    : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                            )}>
+                                {doc.type === 'action' ? '서명' : '안내'}
+                            </span>
+                            <span className="text-[10px] text-gray-500 font-mono">
+                                {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
+                            </span>
+                        </div>
+                        <h4 className={cn(
+                            "text-sm font-bold leading-snug line-clamp-2 transition-colors mb-2",
+                            selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
+                        )}>
+                            {doc.title}
+                        </h4>
+
+                        {/* Progress Bar in List */}
+                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div
+                                className={cn("h-full rounded-full transition-all duration-500", doc.status === 'completed' ? "bg-emerald-500" : "bg-indigo-500")}
+                                style={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
+                            />
+                        </div>
+                    </button>
+                ))}
+            </div>
+
+            {/* Fixed Bottom: Settings */}
+            <div className="p-4 border-t border-white/5 bg-black/20 backdrop-blur-md">
+                <button className="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-white/5 transition-colors group">
+                    <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                        <Settings size={16} />
                     </div>
-                    <div className="flex justify-between items-center mb-3">
-                        <p className="text-[10px] text-gray-400 font-black uppercase tracking-[0.2em]">Shortcuts</p>
-                        <Keyboard size={12} className="text-gray-600" />
+                    <div className="text-left flex-1 overflow-hidden">
+                        <p className="text-xs font-bold text-gray-300 group-hover:text-white truncate">환경 설정</p>
+                        <p className="text-[10px] text-gray-600 truncate">gatong.creat1324.com</p>
                     </div>
-                    <div className="space-y-2">
-                        <ShortcutHint kbd="↑↓" label="목록 이동" />
-                        <ShortcutHint kbd="Enter" label="상세 보기" />
-                        <ShortcutHint kbd="Space" label="미리보기" />
-                    </div>
-                </div>
-                <button className="w-full py-4 bg-white/[0.03] hover:bg-rose-500/10 text-gray-400 hover:text-rose-400 rounded-2xl text-[11px] font-black transition-all border border-white/[0.05] hover:border-rose-500/20 active:scale-[0.98] uppercase tracking-widest">
-                    Sign Out
                 </button>
             </div>
         </div>
     );
 
-    // Column 1: Document List
-    const list = (
-        <div className="flex flex-col h-full bg-background/40 backdrop-blur-md">
-            <div className="p-6 border-b border-white/[0.05] space-y-5">
-                <div className="flex items-center justify-between">
-                    <h2 className="text-sm font-black text-white flex items-center gap-2.5 uppercase tracking-wide">
-                        <FileText size={18} className="text-indigo-500" />
-                        Document Inbox
-                    </h2>
-                    <button
-                        onClick={() => setIsUploadModalOpen(true)}
-                        className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl transition-all shadow-xl shadow-indigo-900/40 active:scale-90"
-                    >
-                        <Upload size={16} />
-                    </button>
-                </div>
-                <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-3.5 top-3 text-gray-500" />
-                    <input
-                        type="text"
-                        placeholder="Search title..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full glass-input rounded-xl pl-10 pr-4 py-2.5 text-xs text-white focus:outline-none"
-                    />
-                </div>
-                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                    <Badge label="전체" active />
-                    <Badge label="진행중" />
-                    <Badge label="마감" />
-                </div>
+    // --- Column 2: Workspace (Viewer / Wizard) ---
+    const viewer = viewMode === 'create' ? (
+        <CorrespondenceWizard
+            onSuccess={(newDoc) => {
+                setDocuments(prev => [newDoc, ...prev]);
+                setSelectedDocId(newDoc.id);
+                setViewMode('analytics');
+            }}
+            onCancel={() => {
+                setViewMode('analytics');
+                if (documents.length > 0) setSelectedDocId(documents[0].id);
+            }}
+        />
+    ) : (
+        <ActiveDocumentViewer document={selectedDoc} />
+    );
+
+    // --- Column 3: Manager (Stats & List) ---
+    const stats = (
+        <div className="flex flex-col h-full bg-secondary/20 relative">
+            {/* Top: Stats Summary */}
+            <div className="shrink-0">
+                <SubmissionStats
+                    document={selectedDoc ? {
+                        title: selectedDoc.title,
+                        submittedCount: selectedDoc.submitted_count,
+                        totalCount: selectedDoc.total_count,
+                        deadline: selectedDoc.deadline || ''
+                    } : null}
+                />
             </div>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 pt-4">
-                <div className="space-y-2">
-                    {documents.filter(d => d.title.includes(searchQuery)).map((doc) => (
-                        <button
-                            key={doc.id}
-                            onClick={() => setSelectedDocId(doc.id)}
-                            className={cn(
-                                "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97]",
-                                selectedDocId === doc.id
-                                    ? "bg-indigo-600/[0.08] border border-indigo-500/40 shadow-xl"
-                                    : "hover:bg-white/[0.03] border border-transparent"
-                            )}
-                        >
-                            <div className="flex justify-between items-center mb-2.5">
-                                <span className={cn(
-                                    "text-[9px] font-black px-2 py-0.5 rounded-md uppercase tracking-widest border",
-                                    doc.type === 'action'
-                                        ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                        : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                                )}>
-                                    {doc.type === 'action' ? '서명' : '안내'}
-                                </span>
-                                <span className="text-[9px] text-gray-600 font-mono italic">
-                                    {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
-                                </span>
-                            </div>
-                            <h4 className={cn(
-                                "text-xs font-bold leading-relaxed line-clamp-2 transition-colors",
-                                selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
-                            )}>
-                                {doc.title}
-                            </h4>
-
-                            <div className="mt-4 pt-4 border-t border-white/[0.03] flex items-center justify-between">
-                                <div className="flex items-center gap-2.5 flex-1">
-                                    <div className="flex-1 h-1 bg-white/5 rounded-full overflow-hidden">
-                                        <motion.div
-                                            initial={{ width: 0 }}
-                                            animate={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
-                                            className={cn("h-full rounded-full", doc.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500')}
-                                        />
-                                    </div>
-                                    <span className="text-[10px] text-gray-500 font-black font-mono w-8 text-right">{Math.round((doc.submitted_count / doc.total_count) * 100)}%</span>
-                                </div>
-                                {selectedDocId === doc.id && (
-                                    <motion.div layoutId="doc-active-indicator" className="ml-3 w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.8)]" />
-                                )}
-                            </div>
-                        </button>
-                    ))}
-                </div>
+            {/* Middle: Student List */}
+            <div className="flex-1 overflow-hidden flex flex-col border-t border-white/5">
+                <StudentListView students={students} loading={isStudentsLoading} />
             </div>
         </div>
     );
 
-    // Column 2: Document Viewer
-    const viewer = (
-        <ActiveDocumentViewer document={selectedDoc} />
-    );
+    // List is hidden in this layout, but we need to pass null or empty fragment to layout
+    const list = null;
 
-    // Column 3: Stats
-    const stats = (
-        <SubmissionStats
-            document={selectedDoc ? {
-                title: selectedDoc.title,
-                submittedCount: selectedDoc.submitted_count,
-                totalCount: selectedDoc.total_count,
-                deadline: selectedDoc.deadline || ''
-            } : null}
-        />
-    );
+    // --- Onboarding Tour ---
+    const [showTour, setShowTour] = useState(false);
+    const [dontShowAgain, setDontShowAgain] = useState(false);
+
+    useEffect(() => {
+        const hasSeenTour = localStorage.getItem('hasSeenTour');
+        // Show tour if no documents exist, not creating, and hasn't opted out
+        if (documents.length === 0 && viewMode === 'analytics' && !loading && hasSeenTour !== 'true') {
+            setShowTour(true);
+        } else {
+            setShowTour(false);
+        }
+    }, [documents, viewMode, loading]);
+
+    const handleStartTour = () => {
+        if (dontShowAgain) {
+            localStorage.setItem('hasSeenTour', 'true');
+        }
+        setShowTour(false);
+        // Direct Action: Open Wizard
+        setSelectedDocId(null);
+        setViewMode('create');
+    };
+
+    const handleDismissTour = () => {
+        if (dontShowAgain) {
+            localStorage.setItem('hasSeenTour', 'true');
+        }
+        setShowTour(false);
+    };
 
     return (
         <>
@@ -246,15 +286,62 @@ function AdminDashboardContent() {
                 list={list}
                 viewer={viewer}
                 stats={stats}
+                showList={false} // Force 3-column mode by hiding the middle list column
+                showStats={true}
             />
-            <UploadModal
-                isOpen={isUploadModalOpen}
-                onClose={() => setIsUploadModalOpen(false)}
-                onSuccess={(newDoc) => {
-                    setDocuments(prev => [newDoc, ...prev]);
-                    setSelectedDocId(newDoc.id);
-                }}
-            />
+
+            <AnimatePresence>
+                {showTour && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[999] bg-black/60 backdrop-blur-sm flex items-center justify-center"
+                    >
+                        {/* Backdrop Click to Dismiss */}
+                        <div className="absolute inset-0" onClick={handleDismissTour} />
+
+                        <div className="absolute left-[360px] top-[140px] pointer-events-auto">
+                            <motion.div
+                                initial={{ x: -20, opacity: 0 }}
+                                animate={{ x: 0, opacity: 1 }}
+                                transition={{ delay: 0.5 }}
+                                className="bg-indigo-600 text-white p-6 rounded-3xl shadow-[0_0_50px_rgba(99,102,241,0.5)] max-w-sm relative"
+                            >
+                                <div className="absolute -left-3 top-6 w-0 h-0 border-t-[10px] border-t-transparent border-r-[12px] border-r-indigo-600 border-b-[10px] border-b-transparent"></div>
+                                <h3 className="text-lg font-black mb-2 flex items-center gap-2">
+                                    <Sparkles size={20} className="text-yellow-300 animate-pulse" />
+                                    환영합니다, 선생님!
+                                </h3>
+                                <p className="text-sm font-medium leading-relaxed opacity-90 mb-4">
+                                    아직 작성된 가정통신문이 없네요.<br />
+                                    <strong>[새 가정통신문 만들기]</strong> 버튼을 눌러서<br />
+                                    첫 번째 통신문을 30초 만에 만들어보세요!
+                                </p>
+
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        onClick={handleStartTour}
+                                        className="w-full text-xs bg-white/20 hover:bg-white/30 py-3 rounded-xl font-bold transition-colors shadow-lg"
+                                    >
+                                        알겠어요, 지금 시작할게요!
+                                    </button>
+
+                                    <label className="flex items-center gap-2 text-[10px] opacity-70 cursor-pointer hover:opacity-100 transition-opacity">
+                                        <input
+                                            type="checkbox"
+                                            checked={dontShowAgain}
+                                            onChange={(e) => setDontShowAgain(e.target.checked)}
+                                            className="rounded border-white/30 bg-white/10 text-indigo-500 focus:ring-offset-indigo-600"
+                                        />
+                                        다음에 다시 보지 않기
+                                    </label>
+                                </div>
+                            </motion.div>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </>
     );
 }
@@ -262,72 +349,15 @@ function AdminDashboardContent() {
 // Sub-components
 function LinkLogo() {
     return (
-        <h1 className="text-2xl font-black text-white flex items-center gap-3 tracking-tighter italic">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-violet-600 flex items-center justify-center shadow-xl shadow-indigo-900/40 transform -rotate-6">
-                <span className="not-italic text-white">G</span>
+        <div className="flex items-center gap-3 select-none transform origin-left transition-all duration-300">
+            <div className="w-9 h-9 nav-logo-icon rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+                <span className="font-black text-white text-lg">G</span>
             </div>
-            <span>Gatong<span className="text-indigo-500">Pass</span></span>
-        </h1>
-    );
-}
-
-function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode, label: string, active?: boolean, onClick: () => void }) {
-    return (
-        <button
-            onClick={onClick}
-            className={cn(
-                "w-full flex items-center gap-4 px-5 py-4 rounded-2xl transition-all font-black text-[13px] group relative uppercase tracking-wider",
-                active
-                    ? "text-white"
-                    : "text-gray-500 hover:text-gray-200"
-            )}
-        >
-            <span className={cn("transition-all duration-300", active ? "text-indigo-500 scale-110" : "text-gray-600 group-hover:text-gray-400")}>{icon}</span>
-            <span>{label}</span>
-            {active && (
-                <motion.div
-                    layoutId="activeNav"
-                    className="absolute inset-0 bg-white/[0.03] border border-white/[0.05] rounded-2xl -z-10 shadow-2xl overflow-hidden"
-                >
-                    <div className="absolute left-0 top-0 w-1 h-full bg-indigo-500" />
-                </motion.div>
-            )}
-        </button>
-    );
-}
-
-function Badge({ label, active }: { label: string, active?: boolean }) {
-    return (
-        <span className={cn(
-            "px-4 py-1.5 rounded-full text-[10px] font-black cursor-pointer transition-all border whitespace-nowrap uppercase tracking-widest",
-            active
-                ? "bg-indigo-600 text-white border-indigo-500 shadow-lg shadow-indigo-900/30"
-                : "bg-white/[0.03] border-white/[0.05] text-gray-500 hover:text-gray-300"
-        )}>
-            {label}
-        </span>
-    );
-}
-
-function ShortcutHint({ kbd, label }: { kbd: string, label: string }) {
-    return (
-        <div className="flex items-center justify-between text-[10px] text-gray-500 group cursor-default">
-            <span className="font-bold opacity-60 group-hover:opacity-100 transition-opacity uppercase">{label}</span>
-            <kbd className="bg-white/5 px-2 py-0.5 rounded-lg border border-white/5 font-mono group-hover:bg-indigo-500/20 group-hover:text-indigo-400 group-hover:border-indigo-500/20 transition-all uppercase">{kbd}</kbd>
+            <div className="flex flex-col nav-logo-text leading-none">
+                <span className="font-black text-base text-white tracking-tight">GATONG</span>
+                <span className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase">PASS ADMIN</span>
+            </div>
         </div>
-    );
-}
-
-export default function AdminDashboard() {
-    return (
-        <Suspense fallback={
-            <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
-                <Spinner />
-                <p className="text-xs font-black text-indigo-500 uppercase tracking-[0.3em] animate-pulse">Initializing Gate</p>
-            </div>
-        }>
-            <AdminDashboardContent />
-        </Suspense>
     );
 }
 
@@ -340,9 +370,18 @@ function Spinner() {
                 animate={{ rotate: 360 }}
                 transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
             />
-            <div className="absolute inset-0 flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,1)]" />
-            </div>
         </div>
+    );
+}
+
+export default function AdminDashboard() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-6">
+                <Spinner />
+            </div>
+        }>
+            <AdminDashboardContent />
+        </Suspense>
     );
 }

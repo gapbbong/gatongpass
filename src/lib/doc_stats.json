@@ -1,0 +1,122 @@
+{
+    "categories": {
+        "field_trip": {
+            "keywords": [
+                "체험학습",
+                "수학여행",
+                "사제동행",
+                "진로체험"
+            ],
+            "suggested_items": [
+                {
+                    "type": "radio",
+                    "label": "참가 여부",
+                    "options": [
+                        "참가",
+                        "불참"
+                    ],
+                    "required": true
+                },
+                {
+                    "type": "text",
+                    "label": "불참 사유",
+                    "required": false
+                },
+                {
+                    "type": "text",
+                    "label": "학생 비상 연락처",
+                    "required": true
+                },
+                {
+                    "type": "radio",
+                    "label": "알레르기 유무",
+                    "options": [
+                        "없음",
+                        "있음(메모 기재)"
+                    ],
+                    "required": true
+                }
+            ]
+        },
+        "survey": {
+            "keywords": [
+                "조사",
+                "설문",
+                "희망",
+                "의견"
+            ],
+            "suggested_items": [
+                {
+                    "type": "radio",
+                    "label": "찬반/선택",
+                    "options": [
+                        "찬성/희망함",
+                        "반대/희망하지 않음"
+                    ],
+                    "required": true
+                },
+                {
+                    "type": "text",
+                    "label": "기타 의견",
+                    "required": false
+                }
+            ]
+        },
+        "agreement": {
+            "keywords": [
+                "동의서",
+                "수집",
+                "활용",
+                "서명"
+            ],
+            "suggested_items": [
+                {
+                    "type": "radio",
+                    "label": "개인정보 수집 및 활용 동의",
+                    "options": [
+                        "동의함",
+                        "동의하지 않음"
+                    ],
+                    "required": true
+                },
+                {
+                    "type": "text",
+                    "label": "보호자 성명",
+                    "required": true
+                },
+                {
+                    "type": "signature",
+                    "label": "보호자 서명",
+                    "required": true
+                }
+            ]
+        },
+        "info": {
+            "keywords": [
+                "안내",
+                "일정",
+                "방법",
+                "계획"
+            ],
+            "suggested_items": []
+        }
+    },
+    "archive_mapping": [
+        {
+            "name": "2025학년도 사제동행 진로 체험활동 가정통신문.hwp",
+            "type": "field_trip"
+        },
+        {
+            "name": "2025학년도 식품 알레르기 유병학생 조사 가정통신문.hwp",
+            "type": "survey"
+        },
+        {
+            "name": "2026학년도 수학여행 참가여부 및 희망지역 조사 가정통신문.hwp",
+            "type": "field_trip"
+        },
+        {
+            "name": "2025학년도 학생 건강상태조사 및 응급환자관리 동의서 가정통신문.hwp",
+            "type": "agreement"
+        }
+    ]
+}

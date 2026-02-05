@@ -193,11 +193,11 @@ export default function DocumentList() {
                             </div>
 
                             <div className="mt-4 space-y-3">
-                                <div className="flex gap-2">
+                                <div className="flex gap-2 flex-wrap">
                                     {doc.type === 'action' ? (
                                         <button
                                             onClick={() => handleSignClick(doc)}
-                                            className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20"
+                                            className="flex-1 min-w-[120px] py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20"
                                         >
                                             <PenTool className="w-4 h-4" />
                                             확인 및 제출
@@ -206,7 +206,7 @@ export default function DocumentList() {
                                         <a
                                             href={doc.path}
                                             target="_blank"
-                                            className="flex-1 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all"
+                                            className="flex-1 min-w-[120px] py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg text-sm font-medium flex items-center justify-center gap-2 transition-all"
                                         >
                                             <FileText className="w-4 h-4" />
                                             문서 보기

@@ -58,6 +58,24 @@ export default function SignatureModal({ isOpen, onClose, docName }: SignatureMo
             onClose();
             clearSignature();
             // Reset form
+            // Clarity Analytics Identification
+            if (typeof window !== 'undefined' && (window as any).clarity) {
+                const studentId = `${grade}-${classNum}-${studentNum}`;
+                const fullIdentifier = `${studentId}_${studentName}`;
+
+                // Identify the user session uniquely
+                (window as any).clarity("identify", fullIdentifier, {
+                    userFriendlyName: studentName,
+                    grade: grade,
+                    class: classNum,
+                    number: studentNum
+                });
+
+                // Set searchable tags
+                (window as any).clarity("set", "student_name", studentName);
+                (window as any).clarity("set", "class_info", `${grade}학년 ${classNum}반`);
+            }
+
             setStudentNum('');
             setStudentName('');
             setParentName('');
