@@ -1,17 +1,20 @@
 'use client';
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import {
     Upload, X, FileText, CheckCircle2, AlertCircle, Loader2,
     Sparkles, Plus, Trash2, ChevronRight, Layout, Check, AlignLeft,
     Copy, Search, MousePointer2, Wand2, PenTool, Smartphone, QrCode, Download,
-    Users, Calendar, Clock
+    Users, Calendar, Clock, Share2, MessageCircle, FileImage, ExternalLink,
+    Minus, Sheet, UserPlus, Table2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-// import { uploadDocument } from '@/lib/docService'; // Will use props to bubble up
 import { cn } from '@/lib/utils';
 import docStats from '@/lib/doc_stats.json';
+
+// --- Types ---
+type Step = 'upload' | 'type_select' | 'form_builder' | 'settings' | 'processing' | 'completed';
 
 interface FormItem {
     id: string;
@@ -26,470 +29,522 @@ interface CorrespondenceWizardProps {
     onCancel: () => void;
 }
 
-type Step = 'upload' | 'analyze' | 'suggest' | 'builder' | 'preview' | 'settings';
+// --- Target Audience Definitions ---
+const DEPARTMENTS = [
+    { id: 'iot', name: 'IoT전기과' },
+    { id: 'game', name: '게임콘텐츠과' }
+];
+
+const GRADES = ['1', '2', '3'];
 
 export default function CorrespondenceWizard({ onSuccess, onCancel }: CorrespondenceWizardProps) {
+    // --- State ---
     const [step, setStep] = useState<Step>('upload');
+
+    // 1. File & Basic Info
     const [file, setFile] = useState<File | null>(null);
     const [title, setTitle] = useState('');
-    const [pastedContent, setPastedContent] = useState('');
-    const [isUploading, setIsUploading] = useState(false);
-    const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const [docType, setDocType] = useState<'notice' | 'action' | null>(null); // 단순안내 vs 회신
 
-    // Settings
-    const [deadlineDate, setDeadlineDate] = useState('');
-    const [deadlineTime, setDeadlineTime] = useState('16:30');
-    const [targetAudience, setTargetAudience] = useState<'all' | 'grade' | 'class'>('all');
-
-    // Form Builder State
+    // 2. Form Builder
     const [formItems, setFormItems] = useState<FormItem[]>([]);
-    const [suggestedTemplates, setSuggestedTemplates] = useState<any[]>([]);
 
+    // 3. Settings (Target & Deadline)
+    const [targetCategory, setTargetCategory] = useState<'all' | 'grade' | 'dept' | 'student'>('all');
+    const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
+    const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
+    const [targetStudents, setTargetStudents] = useState<string>(''); // Comma separated
+
+    const [deadline, setDeadline] = useState<Date>(() => {
+        const d = new Date();
+        d.setDate(d.getDate() + 3); // Default +3 days
+        return d;
+    });
+
+    // 4. Final Processing
+    const [isSheetCreating, setIsSheetCreating] = useState(false);
+    const [tempDoc, setTempDoc] = useState<any>(null);
+
+    // --- Handlers ---
+
+    // File Drop
     const onDrop = useCallback((acceptedFiles: File[]) => {
         if (acceptedFiles.length > 0) {
             setFile(acceptedFiles[0]);
             if (!title) setTitle(acceptedFiles[0].name.replace(/\.[^/.]+$/, ""));
-            setError(null);
         }
     }, [title]);
 
     const { getRootProps, getInputProps } = useDropzone({
         onDrop,
-        accept: { 'application/pdf': ['.pdf'] },
+        accept: { 'application/pdf': ['.pdf'], 'image/*': ['.png', '.jpg', '.jpeg'] },
         multiple: false
     });
 
-    const analyzeContext = useCallback(async () => {
-        setIsAnalyzing(true);
-        // Simulate AI Analysis
-        await new Promise(resolve => setTimeout(resolve, 2000)); // Slightly longer for "AI Magic" feel
-
-        let textToAnalyze = (title + ' ' + pastedContent);
-        const lowerText = textToAnalyze.toLowerCase();
-
-        // --- 1. AI Content Refinement (Friendly Tone) ---
-        // If specific keywords are found, we rewrite the content to be friendlier
-        if (lowerText.includes('경성 미래인') || lowerText.includes('ks ftp')) {
-            const friendlyContent = `[AI가 다듬은 학부모님용 안내문입니다 💌]
-
-안녕하세요, 학부모님! 
-학부모님의 가정에 늘 행복과 건강이 가득하시기를 기원합니다. 🌿
-
-기쁜 소식을 전해드립니다. 귀댁의 자녀가 본교의 핵심 인재 양성 프로그램인 『경성 미래인(KS FTP)』에 자랑스럽게 선발되었습니다! 🎉
-이와 관련하여, 학생들의 올바른 인성 함양과 예절 교육을 위해 전문 기관인 '동래향교'에서 진행하는 예절 교육에 참여하고자 합니다.
-
-우리 학생들이 서로 존중하고 배려하는 멋진 어른으로 성장할 수 있도록, 이번 프로그램에 많은 관심과 격려 부탁드립니다. 학교에서도 아이들이 안전하고 유익한 시간을 보낼 수 있도록 최선을 다하겠습니다.
-
-📅 **일시**: 2025년 5월 23일(금)
-📍 **장소**: 동래 향교
-👥 **대상**: 경성 미래인 1학년 (20명)
-🙇 **내용**: 인성 및 전통 예절 교실
-💸 **비용**: 전액 무료 (학교 지원)
-
-학부모님의 따뜻한 응원 부탁드립니다. 감사합니다.
-경성전자고등학교장 드림`;
-
-            setPastedContent(friendlyContent);
-            // Update local var for categorization
-            textToAnalyze = friendlyContent;
+    // Type Selection
+    const selectType = (type: 'notice' | 'action') => {
+        setDocType(type);
+        if (type === 'notice') {
+            setFormItems([]); // No items needed
+            setStep('settings');
+        } else {
+            // Pre-fill some defaults for action
+            setFormItems([
+                { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
+                { id: '2', type: 'signature', label: '보호자 서명', required: true }
+            ]);
+            setStep('form_builder');
         }
-
-        // --- 2. Category Suggestion ---
-        const combinedText = textToAnalyze.toLowerCase();
-        const suggestions: any[] = [];
-
-        Object.entries(docStats.categories).forEach(([key, category]: [string, any]) => {
-            if (category.keywords.some((kw: string) => combinedText.includes(kw))) {
-                suggestions.push({
-                    id: key,
-                    name: key === 'field_trip' ? '현장학습/체험활동 세트' :
-                        key === 'survey' ? '희망 조사 세트' :
-                            key === 'agreement' ? '개인정보동의 세트' : '기본 안내 세트',
-                    desc: `${category.keywords[0]} 관련 문서에 최적화된 설문`,
-                    items: category.suggested_items,
-                    icon: key === 'field_trip' ? <MousePointer2 className="text-emerald-400" /> :
-                        key === 'agreement' ? <CheckCircle2 className="text-indigo-400" /> : <Wand2 className="text-purple-400" />
-                });
-            }
-        });
-
-        if (suggestions.length === 0) {
-            suggestions.push({
-                id: 'custom',
-                name: '맞춤형 설문 생성',
-                desc: '문서 내용을 바탕으로 새로 구성합니다',
-                items: [{ id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true }],
-                icon: <Plus className="text-gray-400" />
-            });
-        }
-
-        setSuggestedTemplates(suggestions);
-        setIsAnalyzing(false);
-        setStep('suggest');
-    }, [title, pastedContent]);
-
-    const handleNextToAnalyze = () => {
-        if (!title) {
-            setError('통신문 제목을 입력해주세요.');
-            return;
-        }
-        setStep('analyze');
     };
 
-    const applyTemplate = (items: any[]) => {
-        setFormItems(items.map(it => ({ ...it, id: Math.random().toString(36).substr(2, 9) })));
-        setStep('builder');
-    };
-
-    // ... (Builder helpers: addFormItem, removeFormItem, updateFormItem - Same as UploadModal)
+    // Form Builder Helpers
     const addFormItem = (type: FormItem['type']) => {
-        const newItem: FormItem = {
+        setFormItems(prev => [...prev, {
             id: Date.now().toString(),
             type,
-            label: type === 'text' ? '주관식 질문' : '새 질문',
-            options: type === 'text' ? undefined : ['옵션 1', '옵션 2'],
+            label: '새 항목',
+            options: type === 'radio' ? ['옵션1', '옵션2'] : undefined,
             required: true
-        };
-        setFormItems([...formItems, newItem]);
+        }]);
     };
-
+    const updateFormItem = (id: string, update: Partial<FormItem>) => {
+        setFormItems(prev => prev.map(item => item.id === id ? { ...item, ...update } : item));
+    };
     const removeFormItem = (id: string) => {
-        setFormItems(formItems.filter(item => item.id !== id));
+        setFormItems(prev => prev.filter(item => item.id !== id));
     };
 
-    const updateFormItem = (id: string, updates: Partial<FormItem>) => {
-        setFormItems(formItems.map(item => item.id === id ? { ...item, ...updates } : item));
+    // Deadline Helpers
+    const adjustDeadline = (days: number) => {
+        const newDate = new Date(deadline);
+        newDate.setDate(newDate.getDate() + days);
+
+        // Min date check (tomorrow)
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(0, 0, 0, 0);
+
+        if (newDate < tomorrow) return;
+        setDeadline(newDate);
     };
 
-    const [isGracePeriod, setIsGracePeriod] = useState(false);
-    const [countdown, setCountdown] = useState(60);
-    const timerRef = useRef<NodeJS.Timeout | null>(null);
+    // Format Date for UI
+    const formattedDeadline = deadline.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
 
-    const handleTestSend = () => {
-        alert("선생님의 휴대폰 번호로 미리보기가 발송되었습니다.\n(실제 발송되는 화면과 동일합니다)");
+    // Target Helpers
+    const toggleSelection = (list: string[], item: string, setList: React.Dispatch<React.SetStateAction<string[]>>) => {
+        if (list.includes(item)) setList(list.filter(i => i !== item));
+        else setList([...list, item]);
     };
 
-    const startGracePeriod = () => {
-        setIsGracePeriod(true);
-        setCountdown(60);
+    // Sheet Creation & Finalize
+    const startProcessing = async () => {
+        setStep('processing');
+        setIsSheetCreating(true);
 
-        timerRef.current = setInterval(() => {
-            setCountdown(prev => {
-                if (prev <= 1) {
-                    clearInterval(timerRef.current!);
-                    completeUpload();
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
-    };
-
-    const cancelUpload = () => {
-        if (timerRef.current) clearInterval(timerRef.current);
-        setIsGracePeriod(false);
-        setCountdown(60);
-        alert("발송이 취소되었습니다. 내용을 다시 수정하실 수 있습니다.");
-    };
-
-    const completeUpload = async () => {
-        // Real upload logic
-        setIsUploading(true);
+        // 1. Simulate Google Sheet Creation
         await new Promise(resolve => setTimeout(resolve, 2000));
 
+        // 2. Create Doc Data
         const newDoc = {
             id: Date.now().toString(),
             title: title,
-            type: formItems.some(i => i.type === 'signature') ? 'action' : 'notice',
+            type: docType === 'action' ? 'action' : 'notice',
             created_at: new Date().toISOString(),
             status: 'ongoing',
             submitted_count: 0,
-            total_count: 24, // Demo
-            deadline: `${deadlineDate} ${deadlineTime}`,
-            path: '', // Mock path
+            total_count: calculateTotalTarget(), // Mock calc
+            deadline: deadline.toISOString(),
+            formItems: formItems,
+            sheetUrl: "https://docs.google.com/spreadsheets/d/mock-sheet-id", // Mock URL
+            targetSummary: getTargetSummary()
         };
 
-        onSuccess(newDoc);
-        setIsUploading(false);
-        setIsGracePeriod(false);
+        // 3. Save to LocalStorage for Demo
+        const savedDocs = JSON.parse(localStorage.getItem('gatong_docs') || '[]');
+        savedDocs.push(newDoc);
+        localStorage.setItem('gatong_docs', JSON.stringify(savedDocs));
+
+        setTempDoc(newDoc);
+        setIsSheetCreating(false);
+        setStep('completed');
     };
 
-    // Render Steps
-    // ... Copy render logic from UploadModal but adapted for inline use ...
+    const getTargetSummary = () => {
+        if (targetCategory === 'all') return '전교생';
+        if (targetCategory === 'student') return `개별 학생 (${targetStudents.split(',').filter(s => s.trim()).length}명)`;
+
+        const parts = [];
+        if (selectedGrades.length > 0) parts.push(`${selectedGrades.join(',')}학년`);
+        if (selectedDepts.length > 0) parts.push(`${selectedDepts.map(d => d === 'iot' ? 'IoT' : '게임').join(',')}과`);
+
+        if (parts.length === 0) return '전체';
+        return parts.join(' ');
+    };
+
+    const calculateTotalTarget = () => {
+        // Just mock numbers based on selection
+        if (targetCategory === 'all') return 450;
+        if (targetCategory === 'student') return targetStudents.split(',').length;
+        let base = 100;
+        if (selectedDepts.length > 0) base = base / 2 * selectedDepts.length;
+        if (selectedGrades.length > 0) base = base / 3 * selectedGrades.length;
+        return Math.floor(base);
+    };
+
+    const handleFinalize = () => {
+        if (tempDoc) {
+            onSuccess(tempDoc); // Notify admin dashboard
+        } else {
+            onCancel();
+        }
+    };
+
+    const handleCopyText = () => {
+        const url = `http://localhost:3000/s/${tempDoc?.id}`;
+        const text = `[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${url}`;
+        navigator.clipboard.writeText(text);
+        alert("쿨알림톡용 텍스트가 복사되었습니다.");
+    };
 
     return (
-        <div className="h-full flex flex-col bg-background/50 backdrop-blur-md overflow-hidden relative">
+        <div className="h-full flex flex-col bg-slate-900/50 backdrop-blur-md overflow-hidden relative">
             {/* Header */}
-            <div className="p-6 border-b border-white/5 flex items-center justify-between shrink-0">
+            <div className="p-5 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/[0.02]">
                 <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
                         <Wand2 size={20} />
                     </div>
                     <div>
-                        <h2 className="text-lg font-black text-white">AI 가정통신문 마법사</h2>
-                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">
-                            {step === 'upload' ? 'Step 1. 어떤 내용을 보낼까요?' :
-                                step === 'analyze' ? 'Step 2. 내용을 살펴보고 있어요' :
-                                    step === 'suggest' ? 'Step 3. 딱 맞는 양식을 찾았어요' :
-                                        step === 'builder' ? 'Step 4. 질문 내용을 다듬어볼까요?' :
-                                            step === 'preview' ? 'Step 5. 학부모님께는 이렇게 보여요' :
-                                                'Step 6. 누구에게 언제 보낼까요?'}
+                        <h2 className="text-lg font-black text-white tracking-tight">AI 가정통신문 마법사</h2>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest flex items-center gap-2">
+                            {step === 'upload' && 'Step 1. 파일 업로드'}
+                            {step === 'type_select' && 'Step 2. 유형 선택'}
+                            {step === 'form_builder' && 'Step 3. 응답 항목 구성'}
+                            {step === 'settings' && 'Step 4. 배포 설정'}
+                            {step === 'processing' && 'Step 5. 생성 중...'}
+                            {step === 'completed' && 'Step 6. 발송 준비 완료'}
                         </p>
                     </div>
                 </div>
-                <button onClick={onCancel} className="p-2 hover:bg-white/5 rounded-lg text-gray-500">
-                    <X size={18} />
+                <button onClick={onCancel} className="p-2 hover:bg-white/5 rounded-full text-gray-500 transition-colors">
+                    <X size={20} />
                 </button>
             </div>
 
-            {/* Body */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+            {/* Content Area */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 relative">
                 <AnimatePresence mode="wait">
-                    {/* --- STEP 1: UPLOAD --- */}
+
+                    {/* 1. UPLOAD */}
                     {step === 'upload' && (
-                        <motion.div key="upload" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+                        <motion.div key="upload" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                             <div className="space-y-2">
                                 <label className="text-xs font-bold text-gray-400">제목</label>
                                 <input
                                     value={title}
                                     onChange={e => setTitle(e.target.value)}
-                                    placeholder="예: 2026학년도 현장체험학습 참가 신청서"
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:border-indigo-500/50 outline-none"
+                                    placeholder="가정통신문 제목을 입력하세요"
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:border-indigo-500/50 outline-none transition-colors font-bold"
                                 />
                             </div>
+                            <div {...getRootProps()} className={cn(
+                                "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group",
+                                file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
+                            )}>
+                                <input {...getInputProps()} />
+                                <div className="w-16 h-16 rounded-full bg-white/5 mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    {file ? <CheckCircle2 size={32} className="text-emerald-400" /> : <Upload size={32} className="text-gray-400 group-hover:text-indigo-400" />}
+                                </div>
+                                {file ? (
+                                    <>
+                                        <p className="text-white font-bold text-lg">{file.name}</p>
+                                        <p className="text-emerald-400 text-sm mt-1">업로드 완료!</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="text-white font-bold text-lg mb-1">이미지나 PDF 파일을 이곳에 드래그하세요</p>
+                                        <p className="text-gray-500 text-sm">JPG, PNG, PDF 지원</p>
+                                    </>
+                                )}
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* 2. TYPE SELECT */}
+                    {step === 'type_select' && (
+                        <motion.div key="type" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
+                            <h3 className="text-white font-bold text-lg mb-4 text-center">어떤 종류의 가정통신문인가요?</h3>
                             <div className="grid grid-cols-2 gap-4">
-                                <button onClick={() => setStep('analyze')} className="p-6 bg-white/[0.03] border border-white/5 rounded-2xl hover:bg-white/5 transition-all text-left group">
-                                    <Copy className="text-gray-500 mb-3 group-hover:text-indigo-400 transition-colors" />
-                                    <div className="text-sm font-bold text-white">텍스트 붙여넣기</div>
-                                    <div className="text-[10px] text-gray-500 mt-1">한글(HWP) 내용 복사</div>
+                                <button onClick={() => selectType('notice')} className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all group text-left space-y-3">
+                                    <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
+                                        <FileText size={24} />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-white font-bold text-lg">단순 안내</h4>
+                                        <p className="text-xs text-gray-400 mt-1">학부모님이 내용만 확인하면 됩니다.<br />(예: 학교급식 안내, 일정 안내)</p>
+                                    </div>
                                 </button>
-                                <div {...getRootProps()} className="p-6 bg-white/[0.03] border border-dashed border-white/10 rounded-2xl hover:border-indigo-500/50 cursor-pointer transition-all text-left group">
-                                    <input {...getInputProps()} />
-                                    <Upload className="text-gray-500 mb-3 group-hover:text-indigo-400 transition-colors" />
-                                    <div className="text-sm font-bold text-white">PDF 파일 업로드</div>
-                                    <div className="text-[10px] text-gray-500 mt-1">파일을 끌어다 놓으세요</div>
+                                <button onClick={() => selectType('action')} className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all group text-left space-y-3">
+                                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
+                                        <PenTool size={24} />
+                                    </div>
+                                    <div>
+                                        <h4 className="text-white font-bold text-lg">선택 및 서명</h4>
+                                        <p className="text-xs text-gray-400 mt-1">회신이나 동의서 서명이 필요합니다.<br />(예: 체험학습 동의서, 방과후 신청)</p>
+                                    </div>
+                                </button>
+                            </div>
+                        </motion.div>
+                    )}
+
+                    {/* 3. FORM BUILDER */}
+                    {step === 'form_builder' && (
+                        <motion.div key="builder" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-white font-bold">어떤 응답을 받을까요?</h3>
+                                <div className="flex gap-2">
+                                    <button onClick={() => addFormItem('radio')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 객관식</button>
+                                    <button onClick={() => addFormItem('text')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 주관식</button>
                                 </div>
                             </div>
-                            {file && (
-                                <div className="flex items-center gap-3 p-3 bg-indigo-500/10 rounded-xl border border-indigo-500/20 text-xs text-white">
-                                    <CheckCircle2 size={14} className="text-indigo-400" />
-                                    {file.name}
-                                </div>
-                            )}
-                        </motion.div>
-                    )}
 
-                    {/* --- STEP 2: ANALYZE --- */}
-                    {step === 'analyze' && (
-                        <motion.div key="analyze" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-                            <textarea
-                                value={pastedContent}
-                                onChange={e => setPastedContent(e.target.value)}
-                                placeholder="가정통신문 내용을 여기에 붙여넣으세요..."
-                                className="w-full h-64 bg-white/5 border border-white/10 rounded-xl p-4 text-sm text-white focus:border-indigo-500/50 outline-none resize-none"
-                            />
-                            <button onClick={analyzeContext} disabled={isAnalyzing} className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold flex items-center justify-center gap-2">
-                                {isAnalyzing ? <Loader2 className="animate-spin" /> : <><Sparkles size={18} /> 내용을 분석하고 있어요</>}
-                            </button>
-                        </motion.div>
-                    )}
-
-                    {/* --- STEP 3: SUGGEST --- */}
-                    {step === 'suggest' && (
-                        <motion.div key="suggest" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-                            <p className="text-xs text-gray-400 mb-2">분석 결과 가장 적합한 설문 유형입니다.</p>
-                            {suggestedTemplates.map((tpl) => (
-                                <button key={tpl.id} onClick={() => applyTemplate(tpl.items)} className="w-full p-4 bg-white/5 border border-white/5 hover:border-indigo-500/50 rounded-xl flex items-center gap-4 text-left transition-all group">
-                                    <div className="p-3 bg-black/20 rounded-lg">{tpl.icon}</div>
-                                    <div>
-                                        <div className="text-sm font-bold text-white">{tpl.name}</div>
-                                        <div className="text-[10px] text-gray-500">{tpl.desc}</div>
-                                    </div>
-                                    <ChevronRight className="ml-auto text-gray-500 group-hover:text-indigo-400" size={16} />
-                                </button>
-                            ))}
-                        </motion.div>
-                    )}
-
-                    {/* --- STEP 4: BUILDER --- */}
-                    {step === 'builder' && (
-                        <motion.div key="builder" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-                            <div className="space-y-3">
-                                {formItems.map((item) => (
-                                    <div key={item.id} className="p-4 bg-white/5 rounded-xl border border-white/5 relative group">
-                                        <div className="flex justify-between mb-2">
-                                            <input value={item.label} onChange={e => updateFormItem(item.id, { label: e.target.value })} className="bg-transparent text-sm font-bold text-white outline-none w-full" />
-                                            <button onClick={() => removeFormItem(item.id)} className="text-gray-500 hover:text-rose-400"><Trash2 size={14} /></button>
+                            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                {formItems.map((item, idx) => (
+                                    <div key={item.id} className="p-4 bg-white/5 border border-white/10 rounded-xl relative group">
+                                        <div className="flex items-center gap-3">
+                                            <span className="text-xs font-bold text-indigo-400">Q{idx + 1}</span>
+                                            <input
+                                                value={item.label}
+                                                onChange={e => updateFormItem(item.id, { label: e.target.value })}
+                                                className="flex-1 bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-indigo-500/50"
+                                            />
+                                            <button onClick={() => removeFormItem(item.id)} className="text-gray-600 hover:text-rose-400 transition-colors"><Trash2 size={14} /></button>
                                         </div>
                                         {item.options && (
-                                            <div className="flex gap-2">
-                                                {item.options.map((opt, i) => <span key={i} className="text-[10px] bg-black/20 px-2 py-1 rounded text-gray-400">{opt}</span>)}
+                                            <div className="flex gap-2 mt-3 ml-7">
+                                                {item.options.map(opt => (
+                                                    <span key={opt} className="text-[10px] bg-black/30 px-2 py-1 rounded text-gray-400">{opt}</span>
+                                                ))}
+                                                <span className="text-[10px] text-gray-600 px-2 py-1">...</span>
                                             </div>
                                         )}
                                     </div>
                                 ))}
                             </div>
-                            <div className="flex gap-2 justify-center">
-                                <button onClick={() => addFormItem('radio')} className="px-3 py-2 bg-white/5 rounded-lg text-xs text-gray-400 hover:text-white">+ 객관식 추가</button>
-                                <button onClick={() => addFormItem('text')} className="px-3 py-2 bg-white/5 rounded-lg text-xs text-gray-400 hover:text-white">+ 주관식 추가</button>
-                                <button onClick={() => addFormItem('signature')} className="px-3 py-2 bg-white/5 rounded-lg text-xs text-gray-400 hover:text-white">+ 서명란 추가</button>
-                            </div>
                         </motion.div>
                     )}
 
-                    {/* --- STEP 5: PREVIEW & DOWNLOAD --- */}
-                    {step === 'preview' && (
-                        <motion.div key="preview" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-                            <div className="bg-black/40 border border-white/10 rounded-[2.5rem] p-4 max-w-[300px] mx-auto relative shadow-2xl">
-                                {/* Mobile Notch */}
-                                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-6 bg-black rounded-b-2xl z-20" />
+                    {/* 4. SETTINGS (Target & Deadline) */}
+                    {step === 'settings' && (
+                        <motion.div key="settings" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
 
-                                <div className="bg-white rounded-[2rem] overflow-hidden h-[400px] relative text-slate-900 pointer-events-none select-none">
-                                    <div className="bg-indigo-600 p-4 pt-10 text-white">
-                                        <div className="text-[10px] opacity-80">가정통신문</div>
-                                        <div className="font-bold text-sm leading-tight mt-1">{title}</div>
-                                    </div>
-                                    <div className="p-4 space-y-4 bg-slate-50 h-full">
-                                        <div className="space-y-2">
-                                            {formItems.map((item) => (
-                                                <div key={item.id} className="bg-white p-3 rounded-xl shadow-sm border border-slate-100">
-                                                    <div className="text-[10px] font-bold text-slate-700 mb-2">Q. {item.label}</div>
-                                                    {item.type === 'radio' && (
-                                                        <div className="flex gap-2">
-                                                            {item.options?.map(opt => (
-                                                                <div key={opt} className="flex-1 py-1.5 text-[10px] text-center rounded bg-slate-100 text-slate-500">{opt}</div>
-                                                            ))}
-                                                        </div>
+                            {/* Target Selection */}
+                            <div className="space-y-4">
+                                <h3 className="text-white font-bold flex items-center gap-2">
+                                    <Users size={16} className="text-indigo-400" /> 대상 선택
+                                </h3>
+
+                                {/* Tabs */}
+                                <div className="flex p-1 bg-black/40 rounded-xl">
+                                    {['all', 'grade', 'dept', 'student'].map(t => (
+                                        <button
+                                            key={t}
+                                            onClick={() => setTargetCategory(t as any)}
+                                            className={cn(
+                                                "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                                                targetCategory === t ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
+                                            )}
+                                        >
+                                            {t === 'all' ? '전교생' : t === 'grade' ? '학년별' : t === 'dept' ? '학과별' : '학생지정'}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {/* Content based on Tab */}
+                                <div className="p-5 bg-white/5 border border-white/5 rounded-2xl min-h-[120px]">
+                                    {targetCategory === 'all' && (
+                                        <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
+                                            <Users size={32} className="opacity-20" />
+                                            <p className="text-sm font-bold">전교생에게 발송합니다.</p>
+                                        </div>
+                                    )}
+
+                                    {targetCategory === 'grade' && (
+                                        <div className="flex gap-3 justify-center">
+                                            {GRADES.map(g => (
+                                                <button
+                                                    key={g}
+                                                    onClick={() => toggleSelection(selectedGrades, g, setSelectedGrades)}
+                                                    className={cn(
+                                                        "w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center transition-all",
+                                                        selectedGrades.includes(g)
+                                                            ? "border-indigo-500 bg-indigo-500/20 text-white"
+                                                            : "border-white/10 bg-white/5 text-gray-500 hover:bg-white/10"
                                                     )}
-                                                    {item.type === 'signature' && (
-                                                        <div className="h-12 bg-slate-50 border border-dashed border-slate-200 rounded flex items-center justify-center text-[10px] text-slate-400">서명 입력</div>
-                                                    )}
-                                                </div>
+                                                >
+                                                    <span className="text-xl font-black">{g}</span>
+                                                    <span className="text-[10px]">학년</span>
+                                                </button>
                                             ))}
                                         </div>
+                                    )}
+
+                                    {targetCategory === 'dept' && (
+                                        <div className="flex gap-3 justify-center">
+                                            {DEPARTMENTS.map(d => (
+                                                <button
+                                                    key={d.id}
+                                                    onClick={() => toggleSelection(selectedDepts, d.id, setSelectedDepts)}
+                                                    className={cn(
+                                                        "px-6 py-4 rounded-xl border-2 transition-all",
+                                                        selectedDepts.includes(d.id)
+                                                            ? "border-emerald-500 bg-emerald-500/20 text-white"
+                                                            : "border-white/10 bg-white/5 text-gray-500 hover:bg-white/10"
+                                                    )}
+                                                >
+                                                    <span className="font-bold">{d.name}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {targetCategory === 'student' && (
+                                        <div className="space-y-2">
+                                            <textarea
+                                                value={targetStudents}
+                                                onChange={e => setTargetStudents(e.target.value)}
+                                                placeholder="학번을 입력하세요. (쉼표로 구분, 예: 1101, 1102, 3205)"
+                                                className="w-full h-24 bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-indigo-500/50 outline-none resize-none placeholder:text-gray-600"
+                                            />
+                                            <p className="text-[10px] text-gray-500 text-right">
+                                                {targetStudents.split(',').filter(s => s.trim().length > 0).length}명 선택됨
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Deadline Setting */}
+                            <div className="space-y-4">
+                                <h3 className="text-white font-bold flex items-center gap-2">
+                                    <Clock size={16} className="text-indigo-400" /> 제출 마감일
+                                </h3>
+                                <div className="flex items-center justify-between bg-white/5 border border-white/5 p-4 rounded-2xl">
+                                    <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
+                                        <Minus size={18} />
+                                    </button>
+                                    <div className="text-center">
+                                        <div className="text-xl font-black text-white">{formattedDeadline}</div>
+                                        <div className="text-xs text-gray-500 font-bold mt-1">까지 제출받기</div>
+                                    </div>
+                                    <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
+                                        <Plus size={18} />
+                                    </button>
+                                </div>
+                            </div>
+
+                        </motion.div>
+                    )}
+
+                    {/* 5. PROCESSING (Sheet Creation) */}
+                    {step === 'processing' && (
+                        <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full py-10">
+                            <div className="w-20 h-20 relative">
+                                <div className="absolute inset-0 border-4 border-indigo-500/30 rounded-full"></div>
+                                <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
+                                <Sheet className="absolute inset-0 m-auto text-emerald-500" size={32} />
+                            </div>
+                            <h3 className="text-xl font-black text-white mt-8 mb-2">구글 시트 생성 중...</h3>
+                            <p className="text-sm text-gray-400 text-center">
+                                '{title}_취합용'<br />스프레드시트를 만들고 있어요.
+                            </p>
+                        </motion.div>
+                    )}
+
+                    {/* 6. COMPLETED */}
+                    {step === 'completed' && tempDoc && (
+                        <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                            <div className="text-center">
+                                <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.4)] mb-4 animate-bounce">
+                                    <Check size={32} className="text-white" />
+                                </div>
+                                <h3 className="text-2xl font-black text-white">발송 준비 완료!</h3>
+                            </div>
+
+                            {/* Link Box */}
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                                <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-2">
+                                    <MessageCircle size={14} /> 쿨알림톡 전달용 메시지
+                                </h4>
+                                <div className="bg-black/30 rounded-xl p-4 text-xs text-gray-300 leading-relaxed font-mono whitespace-pre-wrap">
+                                    {`[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\nhttp://localhost:3000/s/${tempDoc.id}`}
+                                </div>
+                                <button onClick={handleCopyText} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                    <Copy size={14} /> 텍스트 복사
+                                </button>
+                            </div>
+
+                            {/* Sheet Link */}
+                            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-400">
+                                        <Table2 size={20} />
+                                    </div>
+                                    <div>
+                                        <div className="text-xs font-bold text-white">자동 취합 설정됨</div>
+                                        <div className="text-[10px] text-emerald-400/80">구글 시트에 실시간으로 기록됩니다.</div>
                                     </div>
                                 </div>
-                            </div>
-
-                            <div className="flex gap-2">
-                                <button onClick={handleTestSend} className="flex-1 py-3 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border border-indigo-500/20">
-                                    <Smartphone size={14} /> 나에게 테스트 발송
-                                </button>
-                                <button className="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold text-gray-300 flex items-center justify-center gap-2">
-                                    <Download size={14} /> 게시용 PDF 다운로드
+                                <button className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-lg text-[10px] font-bold text-emerald-400 transition-colors flex items-center gap-1">
+                                    시트 열기 <ExternalLink size={10} />
                                 </button>
                             </div>
                         </motion.div>
                     )}
 
-                    {/* --- STEP 6: SETTINGS --- */}
-                    {step === 'settings' && (
-                        <motion.div key="settings" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-                            {/* Deadline */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400 flex items-center gap-2"><Calendar size={12} /> 언제까지 받을까요?</label>
-                                <div className="flex gap-2">
-                                    <input type="date" value={deadlineDate} onChange={e => setDeadlineDate(e.target.value)} className="flex-1 bg-white/5 border border-white/10 rounded-xl p-3 text-white text-sm" />
-                                    <input type="time" value={deadlineTime} onChange={e => setDeadlineTime(e.target.value)} className="w-24 bg-white/5 border border-white/10 rounded-xl p-3 text-white text-sm" />
-                                </div>
-                            </div>
-
-                            {/* Audience */}
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400 flex items-center gap-2"><Users size={12} /> 누구에게 보낼까요?</label>
-                                <div className="grid grid-cols-3 gap-2">
-                                    <button onClick={() => setTargetAudience('all')} className={cn("p-3 rounded-xl text-xs font-bold border transition-all", targetAudience === 'all' ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/5 border-white/10 text-gray-500")}>
-                                        전교생
-                                    </button>
-                                    <button onClick={() => setTargetAudience('grade')} className={cn("p-3 rounded-xl text-xs font-bold border transition-all", targetAudience === 'grade' ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/5 border-white/10 text-gray-500")}>
-                                        학년 전체
-                                    </button>
-                                    <button onClick={() => setTargetAudience('class')} className={cn("p-3 rounded-xl text-xs font-bold border transition-all", targetAudience === 'class' ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/5 border-white/10 text-gray-500")}>
-                                        우리 반만
-                                    </button>
-                                </div>
-                            </div>
-
-                            {/* Feature Description */}
-                            <div className="p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/20">
-                                <h4 className="text-white text-xs font-bold mb-1 flex items-center gap-2">
-                                    <Sparkles size={12} className="text-indigo-400" /> 안심하세요!
-                                </h4>
-                                <p className="text-[10px] text-gray-400 leading-relaxed">
-                                    [학부모님께 배부하기] 버튼을 눌러도 바로 전송되지 않습니다.<br />
-                                    <strong>60초 동안 전송 취소</strong>가 가능하니 걱정 마세요.
-                                </p>
-                            </div>
-                        </motion.div>
-                    )}
                 </AnimatePresence>
             </div>
 
-            {/* Footer Navigation */}
-            <div className="p-6 border-t border-white/5 flex gap-3 shrink-0 relative">
-                {isGracePeriod ? (
-                    <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="absolute inset-0 bg-background z-50 flex items-center justify-center p-6 gap-4"
-                    >
-                        <div className="flex-1 flex flex-col justify-center">
-                            <p className="text-xs text-indigo-400 font-bold mb-1 animate-pulse">발송 대기 중... ( {countdown}초 )</p>
-                            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden w-full">
-                                <motion.div
-                                    className="h-full bg-indigo-500"
-                                    initial={{ width: "100%" }}
-                                    animate={{ width: "0%" }}
-                                    transition={{ duration: 60, ease: "linear" }}
-                                />
-                            </div>
-                        </div>
-                        <button
-                            onClick={cancelUpload}
-                            className="px-6 py-3 bg-rose-500 hover:bg-rose-600 text-white rounded-xl font-bold text-xs shadow-lg shadow-rose-900/30"
-                        >
-                            발송 취소
-                        </button>
-                    </motion.div>
-                ) : (
-                    <>
+            {/* Footer */}
+            <div className="p-6 border-t border-white/5 shrink-0">
+                {step === 'completed' ? (
+                    <button onClick={handleFinalize} className="w-full py-4 bg-white text-black hover:bg-gray-200 rounded-2xl font-black transition-colors">
+                        닫기
+                    </button>
+                ) : step !== 'processing' ? (
+                    <div className="flex gap-3">
                         {step !== 'upload' && (
                             <button
                                 onClick={() => {
-                                    if (step === 'analyze') setStep('upload');
-                                    else if (step === 'suggest') setStep('analyze');
-                                    else if (step === 'builder') setStep('suggest');
-                                    else if (step === 'preview') setStep('builder');
-                                    else if (step === 'settings') setStep('preview');
+                                    if (step === 'type_select') setStep('upload');
+                                    else if (step === 'form_builder') setStep('type_select');
+                                    else if (step === 'settings') setStep(docType === 'notice' ? 'type_select' : 'form_builder');
                                 }}
-                                className="px-6 py-4 rounded-2xl bg-white/5 text-gray-400 font-bold text-xs hover:bg-white/10 transition-colors"
+                                className="px-6 py-4 rounded-2xl bg-white/5 text-gray-400 font-bold hover:bg-white/10"
                             >
                                 이전
                             </button>
                         )}
                         <button
                             onClick={() => {
-                                if (step === 'upload') handleNextToAnalyze();
-                                else if (step === 'analyze') analyzeContext();
-                                else if (step === 'suggest') setStep('builder');
-                                else if (step === 'builder') setStep('preview');
-                                else if (step === 'preview') setStep('settings');
-                                else if (step === 'settings') startGracePeriod();
+                                if (step === 'upload') {
+                                    if (!title || !file) return alert('제목과 파일을 확인해주세요');
+                                    setStep('type_select');
+                                } else if (step === 'type_select') {
+                                    // Managed in selection handler
+                                } else if (step === 'form_builder') {
+                                    setStep('settings');
+                                } else if (step === 'settings') {
+                                    startProcessing();
+                                }
                             }}
-                            disabled={isUploading || isAnalyzing}
-                            className={cn(
-                                "flex-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold text-sm py-4 flex items-center justify-center gap-2 shadow-lg shadow-indigo-900/40 transition-all",
-                                step === 'settings' && "animate-breathe" // Apply breathing animation here
-                            )}
+                            className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-lg shadow-indigo-500/30 transition-all"
                         >
-                            {isUploading ? <Loader2 className="animate-spin" /> : (
-                                step === 'settings' ? '학부모님께 배부하기' : '다음 단계로'
-                            )}
-                            {step !== 'settings' && <ChevronRight size={16} />}
+                            {step === 'settings' ? '가정통신문 생성하기' : '다음 단계로'}
                         </button>
-                    </>
-                )}
+                    </div>
+                ) : null}
             </div>
         </div>
     );
