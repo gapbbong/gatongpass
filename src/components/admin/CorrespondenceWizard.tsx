@@ -7,14 +7,15 @@ import {
     Sparkles, Plus, Trash2, ChevronRight, Layout, Check, AlignLeft,
     Copy, Search, MousePointer2, Wand2, PenTool, Smartphone, QrCode, Download,
     Users, Calendar, Clock, Share2, MessageCircle, FileImage, ExternalLink,
-    Minus, Sheet, UserPlus, Table2
+    Minus, Sheet, UserPlus, Table2, Send, ListChecks
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import docStats from '@/lib/doc_stats.json';
+import Tesseract from 'tesseract.js';
 
 // --- Types ---
-type Step = 'upload' | 'type_select' | 'form_builder' | 'settings' | 'processing' | 'completed';
+type Step = 'input' | 'processing' | 'completed';
 
 interface FormItem {
     id: string;
@@ -39,11 +40,14 @@ const GRADES = ['1', '2', '3'];
 
 export default function CorrespondenceWizard({ onSuccess, onCancel }: CorrespondenceWizardProps) {
     // --- State ---
-    const [step, setStep] = useState<Step>('upload');
+    const [step, setStep] = useState<Step>('input');
 
     // 1. File & Basic Info
     const [file, setFile] = useState<File | null>(null);
     const [title, setTitle] = useState('');
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [showTitleHint, setShowTitleHint] = useState(false);
+    const [titleCandidates, setTitleCandidates] = useState<string[]>([]); // 추천 후보
     const [docType, setDocType] = useState<'notice' | 'action' | null>(null); // 단순안내 vs 회신
 
     // 2. Form Builder
@@ -67,11 +71,111 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
     // --- Handlers ---
 
+    // OCR Analysis
+    const analyzeImage = async (file: File) => {
+        if (!file.type.startsWith('image/')) return;
+
+        setIsAnalyzing(true);
+        setTitleCandidates([]); // 초기화
+
+        try {
+            const { data }: any = await Tesseract.recognize(
+                file,
+                'kor', // 한글 우선
+            );
+
+            // 3. 개선된 OCR 전략
+            const rawList: string[] = [];
+            const scoredCandidates: { text: string, score: number }[] = [];
+
+            // 헬퍼: 텍스트 처리 및 점수화
+            const processText = (originalText: string, height: number, yPos: number, pageHeight: number) => {
+                const clean = originalText.replace(/\s+/g, ' ').trim();
+                const display = clean.replace(/[|\]\[_『「」』=—]/g, '').trim();
+
+                if (display.length < 2) return;
+
+                // 후보 리스트에는 (중복 아니면) 무조건 추가
+                if (!rawList.includes(display)) {
+                    rawList.push(display);
+                }
+
+                // 점수 계산 (자동 입력용)
+                let score = height; // 기본 점수는 글자 크기
+
+                // 상단 배치 우대 (문서 상단 30% 이내면 가산점)
+                if (pageHeight > 0 && (yPos / pageHeight) < 0.35) score += 20;
+
+                // 헤더성 텍스트 감점
+                if (/발행처|발행인|발행일|교무실|행정실|FAX|홈페이지|http|www|제\s*[0-9]+호/.test(display)) score -= 50;
+                if (/가정통신문/.test(display)) score -= 30; // '가정통신문'라는 단어 자체는 제목이 아닐 확률 높음
+                if (/^\d{4}[\.\-]\s*\d{1,2}[\.\-]\s*\d{1,2}[\.]?$/.test(display)) score -= 30; // 날짜 감점
+
+                // 괄호로 강조된 텍스트 가산점
+                if (/[『「\[]/.test(originalText)) score += 30;
+
+                scoredCandidates.push({ text: display, score });
+            };
+
+            // 1. Line 기반 분석
+            const lines = data.lines || [];
+            const pageHeight = data.text && lines.length > 0 ? lines[lines.length - 1].bbox.y1 : 1000;
+
+            lines.forEach((line: any) => {
+                const h = line.bbox.y1 - line.bbox.y0;
+                processText(line.text, h, line.bbox.y0, pageHeight);
+            });
+
+            // 2. Fallback: 줄바꿈 기반 분석 (라인 인식이 잘 안됐거나 후보가 적을 때)
+            if (rawList.length < 5 && data.text) {
+                const splits = data.text.split('\n');
+                splits.forEach((s: string, idx: number) => {
+                    // Height 정보 부재 -> 기본값 10, 위치는 대략 추정
+                    processText(s, 10, idx * 30, 1000);
+                });
+            }
+
+            // 결과 적용
+            // 리스트: 상위 10개까지 넉넉하게
+            setTitleCandidates(rawList.slice(0, 10));
+
+            // 자동 입력: 점수가 가장 높은 것
+            scoredCandidates.sort((a, b) => b.score - a.score);
+            const bestPick = scoredCandidates.length > 0 ? scoredCandidates[0].text : "";
+
+            // 제목 설정
+            if (bestPick) {
+                setTitle(bestPick);
+            } else if (rawList.length > 0) {
+                setTitle(rawList[0]);
+            } else {
+                // 정말 아무것도 못 찾았을 때
+                const fallbackName = file.name === 'image.png'
+                    ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분`
+                    : file.name.replace(/\.[^/.]+$/, "");
+                setTitle(fallbackName);
+            }
+
+            setShowTitleHint(true);
+        } catch (err) {
+            console.error("OCR Error", err);
+            // 에러 시 기본값
+            const fallbackName = file.name === 'image.png'
+                ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분`
+                : file.name.replace(/\.[^/.]+$/, "");
+            setTitle(fallbackName);
+        } finally {
+            setIsAnalyzing(false);
+        }
+    };
+
     // File Drop
     const onDrop = useCallback((acceptedFiles: File[]) => {
         if (acceptedFiles.length > 0) {
-            setFile(acceptedFiles[0]);
-            if (!title) setTitle(acceptedFiles[0].name.replace(/\.[^/.]+$/, ""));
+            const f = acceptedFiles[0];
+            setFile(f);
+            // setTitle 제거 (OCR 결과 대기)
+            analyzeImage(f);
         }
     }, [title]);
 
@@ -86,19 +190,51 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         multiple: false
     });
 
+    const titleInputRef = useRef<HTMLInputElement>(null);
+
+    // Paste Handler
+    useEffect(() => {
+        const handlePaste = (e: ClipboardEvent) => {
+            if (step !== 'input') return;
+
+            const items = e.clipboardData?.items;
+            if (!items) return;
+
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                if (item.type.indexOf('image') !== -1 || item.type === 'application/pdf') {
+                    const blob = item.getAsFile();
+                    if (blob) {
+                        setFile(blob);
+                        if (blob.type.startsWith('image/')) {
+                            analyzeImage(blob);
+                        } else {
+                            setTitle(blob.name.replace(/\.[^/.]+$/, ""));
+                        }
+                    }
+                    break;
+                }
+            }
+        };
+
+        window.addEventListener('paste', handlePaste);
+        return () => window.removeEventListener('paste', handlePaste);
+    }, [step, title]);
+
     // Type Selection
     const selectType = (type: 'notice' | 'action') => {
         setDocType(type);
+        // Automatically handled by conditional rendering
         if (type === 'notice') {
-            setFormItems([]); // No items needed
-            setStep('settings');
+            setFormItems([]);
         } else {
-            // Pre-fill some defaults for action
-            setFormItems([
-                { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
-                { id: '2', type: 'signature', label: '보호자 서명', required: true }
-            ]);
-            setStep('form_builder');
+            // If action, add default items if empty
+            if (formItems.length === 0) {
+                setFormItems([
+                    { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
+                    { id: '2', type: 'signature', label: '보호자 서명', required: true }
+                ]);
+            }
         }
     };
 
@@ -107,7 +243,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         setFormItems(prev => [...prev, {
             id: Date.now().toString(),
             type,
-            label: '새 항목',
+            label: type === 'text' ? '새 주관식 질문' : '새 객관식 질문',
             options: type === 'radio' ? ['옵션1', '옵션2'] : undefined,
             required: true
         }]);
@@ -144,6 +280,12 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
     // Sheet Creation & Finalize
     const startProcessing = async () => {
+        if (!title.trim()) {
+            alert('제목을 입력해주세요.');
+            titleInputRef.current?.focus();
+            return;
+        }
+
         setStep('processing');
         setIsSheetCreating(true);
 
@@ -222,13 +364,8 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                     </div>
                     <div>
                         <h2 className="text-lg font-black text-white tracking-tight">AI 가정통신문 마법사</h2>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest flex items-center gap-2">
-                            {step === 'upload' && 'Step 1. 파일 업로드'}
-                            {step === 'type_select' && 'Step 2. 유형 선택'}
-                            {step === 'form_builder' && 'Step 3. 응답 항목 구성'}
-                            {step === 'settings' && 'Step 4. 배포 설정'}
-                            {step === 'processing' && 'Step 5. 생성 중...'}
-                            {step === 'completed' && 'Step 6. 발송 준비 완료'}
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+                            {step === 'input' ? '간편 생성 모드' : step === 'processing' ? '생성 중...' : '완료'}
                         </p>
                     </div>
                 </div>
@@ -241,219 +378,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 relative">
                 <AnimatePresence mode="wait">
 
-                    {/* 1. UPLOAD */}
-                    {step === 'upload' && (
-                        <motion.div key="upload" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
-                            <div className="space-y-2">
-                                <label className="text-xs font-bold text-gray-400">제목</label>
-                                <input
-                                    value={title}
-                                    onChange={e => setTitle(e.target.value)}
-                                    placeholder="가정통신문 제목을 입력하세요"
-                                    className="w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:border-indigo-500/50 outline-none transition-colors font-bold"
-                                />
-                            </div>
-                            <div {...getRootProps()} className={cn(
-                                "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group",
-                                isDragActive ? "border-indigo-500 bg-indigo-500/20 scale-[1.02] shadow-2xl shadow-indigo-500/20" :
-                                    file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
-                            )}>
-                                <input {...getInputProps()} />
-                                <div className="w-16 h-16 rounded-full bg-white/5 mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                    {file ? <CheckCircle2 size={32} className="text-emerald-400" /> : <Upload size={32} className="text-gray-400 group-hover:text-indigo-400" />}
-                                </div>
-                                {file ? (
-                                    <>
-                                        <p className="text-white font-bold text-lg">{file.name}</p>
-                                        <p className="text-emerald-400 text-sm mt-1">업로드 완료!</p>
-                                    </>
-                                ) : (
-                                    <>
-                                        <p className="text-white font-bold text-lg mb-1">이미지나 PDF 파일을 이곳에 드래그하세요</p>
-                                        <p className="text-gray-500 text-sm">JPG, PNG, PDF 지원</p>
-                                    </>
-                                )}
-                            </div>
-                        </motion.div>
-                    )}
-
-                    {/* 2. TYPE SELECT */}
-                    {step === 'type_select' && (
-                        <motion.div key="type" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-4">
-                            <h3 className="text-white font-bold text-lg mb-4 text-center">어떤 종류의 가정통신문인가요?</h3>
-                            <div className="grid grid-cols-2 gap-4">
-                                <button onClick={() => selectType('notice')} className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all group text-left space-y-3">
-                                    <div className="w-12 h-12 rounded-full bg-blue-500/20 flex items-center justify-center text-blue-400 group-hover:scale-110 transition-transform">
-                                        <FileText size={24} />
-                                    </div>
-                                    <div>
-                                        <h4 className="text-white font-bold text-lg">단순 안내</h4>
-                                        <p className="text-xs text-gray-400 mt-1">학부모님이 내용만 확인하면 됩니다.<br />(예: 학교급식 안내, 일정 안내)</p>
-                                    </div>
-                                </button>
-                                <button onClick={() => selectType('action')} className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:bg-indigo-500/10 hover:border-indigo-500/50 transition-all group text-left space-y-3">
-                                    <div className="w-12 h-12 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-400 group-hover:scale-110 transition-transform">
-                                        <PenTool size={24} />
-                                    </div>
-                                    <div>
-                                        <h4 className="text-white font-bold text-lg">선택 및 서명</h4>
-                                        <p className="text-xs text-gray-400 mt-1">회신이나 동의서 서명이 필요합니다.<br />(예: 체험학습 동의서, 방과후 신청)</p>
-                                    </div>
-                                </button>
-                            </div>
-                        </motion.div>
-                    )}
-
-                    {/* 3. FORM BUILDER */}
-                    {step === 'form_builder' && (
-                        <motion.div key="builder" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-6">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-white font-bold">어떤 응답을 받을까요?</h3>
-                                <div className="flex gap-2">
-                                    <button onClick={() => addFormItem('radio')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 객관식</button>
-                                    <button onClick={() => addFormItem('text')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 주관식</button>
-                                </div>
-                            </div>
-
-                            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-                                {formItems.map((item, idx) => (
-                                    <div key={item.id} className="p-4 bg-white/5 border border-white/10 rounded-xl relative group">
-                                        <div className="flex items-center gap-3">
-                                            <span className="text-xs font-bold text-indigo-400">Q{idx + 1}</span>
-                                            <input
-                                                value={item.label}
-                                                onChange={e => updateFormItem(item.id, { label: e.target.value })}
-                                                className="flex-1 bg-transparent text-sm font-bold text-white outline-none border-b border-transparent focus:border-indigo-500/50"
-                                            />
-                                            <button onClick={() => removeFormItem(item.id)} className="text-gray-600 hover:text-rose-400 transition-colors"><Trash2 size={14} /></button>
-                                        </div>
-                                        {item.options && (
-                                            <div className="flex gap-2 mt-3 ml-7">
-                                                {item.options.map(opt => (
-                                                    <span key={opt} className="text-[10px] bg-black/30 px-2 py-1 rounded text-gray-400">{opt}</span>
-                                                ))}
-                                                <span className="text-[10px] text-gray-600 px-2 py-1">...</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </motion.div>
-                    )}
-
-                    {/* 4. SETTINGS (Target & Deadline) */}
-                    {step === 'settings' && (
-                        <motion.div key="settings" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="space-y-8">
-
-                            {/* Target Selection */}
-                            <div className="space-y-4">
-                                <h3 className="text-white font-bold flex items-center gap-2">
-                                    <Users size={16} className="text-indigo-400" /> 대상 선택
-                                </h3>
-
-                                {/* Tabs */}
-                                <div className="flex p-1 bg-black/40 rounded-xl">
-                                    {['all', 'grade', 'dept', 'student'].map(t => (
-                                        <button
-                                            key={t}
-                                            onClick={() => setTargetCategory(t as any)}
-                                            className={cn(
-                                                "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
-                                                targetCategory === t ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
-                                            )}
-                                        >
-                                            {t === 'all' ? '전교생' : t === 'grade' ? '학년별' : t === 'dept' ? '학과별' : '학생지정'}
-                                        </button>
-                                    ))}
-                                </div>
-
-                                {/* Content based on Tab */}
-                                <div className="p-5 bg-white/5 border border-white/5 rounded-2xl min-h-[120px]">
-                                    {targetCategory === 'all' && (
-                                        <div className="flex flex-col items-center justify-center h-full text-gray-400 gap-2">
-                                            <Users size={32} className="opacity-20" />
-                                            <p className="text-sm font-bold">전교생에게 발송합니다.</p>
-                                        </div>
-                                    )}
-
-                                    {targetCategory === 'grade' && (
-                                        <div className="flex gap-3 justify-center">
-                                            {GRADES.map(g => (
-                                                <button
-                                                    key={g}
-                                                    onClick={() => toggleSelection(selectedGrades, g, setSelectedGrades)}
-                                                    className={cn(
-                                                        "w-16 h-16 rounded-xl border-2 flex flex-col items-center justify-center transition-all",
-                                                        selectedGrades.includes(g)
-                                                            ? "border-indigo-500 bg-indigo-500/20 text-white"
-                                                            : "border-white/10 bg-white/5 text-gray-500 hover:bg-white/10"
-                                                    )}
-                                                >
-                                                    <span className="text-xl font-black">{g}</span>
-                                                    <span className="text-[10px]">학년</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {targetCategory === 'dept' && (
-                                        <div className="flex gap-3 justify-center">
-                                            {DEPARTMENTS.map(d => (
-                                                <button
-                                                    key={d.id}
-                                                    onClick={() => toggleSelection(selectedDepts, d.id, setSelectedDepts)}
-                                                    className={cn(
-                                                        "px-6 py-4 rounded-xl border-2 transition-all",
-                                                        selectedDepts.includes(d.id)
-                                                            ? "border-emerald-500 bg-emerald-500/20 text-white"
-                                                            : "border-white/10 bg-white/5 text-gray-500 hover:bg-white/10"
-                                                    )}
-                                                >
-                                                    <span className="font-bold">{d.name}</span>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {targetCategory === 'student' && (
-                                        <div className="space-y-2">
-                                            <textarea
-                                                value={targetStudents}
-                                                onChange={e => setTargetStudents(e.target.value)}
-                                                placeholder="학번을 입력하세요. (쉼표로 구분, 예: 1101, 1102, 3205)"
-                                                className="w-full h-24 bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-indigo-500/50 outline-none resize-none placeholder:text-gray-600"
-                                            />
-                                            <p className="text-[10px] text-gray-500 text-right">
-                                                {targetStudents.split(',').filter(s => s.trim().length > 0).length}명 선택됨
-                                            </p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Deadline Setting */}
-                            <div className="space-y-4">
-                                <h3 className="text-white font-bold flex items-center gap-2">
-                                    <Clock size={16} className="text-indigo-400" /> 제출 마감일
-                                </h3>
-                                <div className="flex items-center justify-between bg-white/5 border border-white/5 p-4 rounded-2xl">
-                                    <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
-                                        <Minus size={18} />
-                                    </button>
-                                    <div className="text-center">
-                                        <div className="text-xl font-black text-white">{formattedDeadline}</div>
-                                        <div className="text-xs text-gray-500 font-bold mt-1">까지 제출받기</div>
-                                    </div>
-                                    <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white transition-colors">
-                                        <Plus size={18} />
-                                    </button>
-                                </div>
-                            </div>
-
-                        </motion.div>
-                    )}
-
-                    {/* 5. PROCESSING (Sheet Creation) */}
+                    {/* PROCESSING VIEW */}
                     {step === 'processing' && (
                         <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full py-10">
                             <div className="w-20 h-20 relative">
@@ -468,7 +393,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                         </motion.div>
                     )}
 
-                    {/* 6. COMPLETED */}
+                    {/* COMPLETED VIEW */}
                     {step === 'completed' && tempDoc && (
                         <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
                             <div className="text-center">
@@ -506,51 +431,306 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                     시트 열기 <ExternalLink size={10} />
                                 </button>
                             </div>
+
+                            <button onClick={handleFinalize} className="w-full py-4 bg-white text-black hover:bg-gray-200 rounded-2xl font-black transition-colors">
+                                닫기
+                            </button>
+                        </motion.div>
+                    )}
+
+                    {/* INPUT FORM (WATERFALL) */}
+                    {(step !== 'processing' && step !== 'completed') && (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="space-y-12 pb-10"
+                        >
+                            {/* SECTION 1: UPLOAD & TITLE */}
+                            <section className="space-y-6">
+                                <div {...getRootProps()} className={cn(
+                                    "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group",
+                                    isDragActive ? "border-indigo-500 bg-indigo-500/20 scale-[1.02] shadow-2xl shadow-indigo-500/20" :
+                                        file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
+                                )}>
+                                    <input {...getInputProps()} />
+                                    <div className="w-16 h-16 rounded-full bg-white/5 mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                        {file ? <CheckCircle2 size={32} className="text-emerald-400" /> : <Upload size={32} className="text-gray-400 group-hover:text-indigo-400" />}
+                                    </div>
+                                    {file ? (
+                                        <>
+                                            <p className="text-white font-bold text-lg">{file.name}</p>
+                                            <p className="text-emerald-400 text-sm mt-1">업로드 완료!</p>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <p className="text-white font-bold text-lg mb-1">이미지나 PDF 파일을 이곳에 드래그하세요</p>
+                                            <p className="text-gray-500 text-sm">JPG, PNG, PDF 지원<br />또는 이미지를 붙여넣으세요 (Ctrl+V)</p>
+                                        </>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <label className="text-xs font-bold text-gray-400">제목</label>
+                                    <div className="relative">
+                                        <input
+                                            ref={titleInputRef}
+                                            value={title}
+                                            onChange={e => setTitle(e.target.value)}
+                                            placeholder={isAnalyzing ? "제목을 분석하고 있습니다..." : "가정통신문 제목을 입력하세요"}
+                                            className={cn(
+                                                "w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:border-indigo-500/50 outline-none transition-colors font-bold",
+                                                isAnalyzing && "animate-pulse text-gray-400"
+                                            )}
+                                            readOnly={isAnalyzing}
+                                        />
+                                        {isAnalyzing && (
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 text-xs text-indigo-400 font-bold">
+                                                <Loader2 className="animate-spin" size={14} /> AI 분석 중
+                                            </div>
+                                        )}
+                                        <AnimatePresence>
+                                            {showTitleHint && (
+                                                <motion.div
+                                                    initial={{ opacity: 0, y: -10 }}
+                                                    animate={{ opacity: 1, y: 0 }}
+                                                    exit={{ opacity: 0, y: -10 }}
+                                                    className="mt-3 relative w-full bg-slate-900/90 backdrop-blur border border-indigo-500/30 text-indigo-100 p-0 rounded-xl shadow-2xl z-20 overflow-hidden"
+                                                >
+                                                    <div className="flex items-center justify-between p-3 bg-indigo-500/10 border-b border-indigo-500/20">
+                                                        <span className="flex items-center gap-2 font-bold text-indigo-300 text-xs uppercase tracking-wider">
+                                                            <Sparkles size={14} className="text-yellow-400" /> AI 추천 제목
+                                                        </span>
+                                                        <button onClick={() => setShowTitleHint(false)} className="text-indigo-400 hover:text-white transition-colors"><X size={14} /></button>
+                                                    </div>
+
+                                                    <div className="p-2 flex flex-col gap-1 max-h-[250px] overflow-y-auto custom-scrollbar">
+                                                        {titleCandidates.length > 0 ? titleCandidates.map((cand, idx) => (
+                                                            <button
+                                                                key={idx}
+                                                                onClick={() => {
+                                                                    setTitle(cand);
+                                                                    setShowTitleHint(false);
+                                                                }}
+                                                                className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-white/10 text-slate-200 transition-all text-sm flex items-start group"
+                                                            >
+                                                                <span className="text-indigo-500 font-mono mr-3 mt-0.5 text-xs group-hover:text-indigo-300">{String(idx + 1).padStart(2, '0')}</span>
+                                                                <span className="leading-snug break-keep">{cand}</span>
+                                                            </button>
+                                                        )) : (
+                                                            <div className="text-gray-500 text-xs p-4 text-center">
+                                                                추천할 제목을 찾지 못했습니다.<br />직접 제목을 입력해주세요.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* SECTION 2: DOC TYPE */}
+                            {file && title.trim().length > 0 && (
+                                <motion.section
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="space-y-4 pt-4 border-t border-white/5"
+                                >
+                                    <h3 className="text-white font-bold text-lg mb-4 text-center">어떤 종류의 가정통신문인가요?</h3>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button
+                                            onClick={() => selectType('notice')}
+                                            className={cn(
+                                                "p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-3",
+                                                docType === 'notice'
+                                                    ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20"
+                                                    : "bg-white/5 border-white/10 hover:bg-white/10 text-gray-400"
+                                            )}
+                                        >
+                                            <div className="p-3 bg-white/10 rounded-full">
+                                                <FileText size={24} className={docType === 'notice' ? "text-white" : "text-gray-400"} />
+                                            </div>
+                                            <div className="font-bold text-white">단순 안내</div>
+                                            <div className="text-xs text-white/60">서명 불필요</div>
+                                        </button>
+                                        <button
+                                            onClick={() => selectType('action')}
+                                            className={cn(
+                                                "p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-3",
+                                                docType === 'action'
+                                                    ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20"
+                                                    : "bg-white/5 border-white/10 hover:bg-white/10 text-gray-400"
+                                            )}
+                                        >
+                                            <div className="p-3 bg-white/10 rounded-full">
+                                                <PenTool size={24} className={docType === 'action' ? "text-white" : "text-gray-400"} />
+                                            </div>
+                                            <div className="font-bold text-white">회신 필요</div>
+                                            <div className="text-xs text-white/60">동의/신청/조사</div>
+                                        </button>
+                                    </div>
+                                </motion.section>
+                            )}
+
+                            {/* SECTION 3: FORM BUILDER (For Action Letter) */}
+                            {docType === 'action' && (
+                                <motion.section
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="space-y-4 pt-4 border-t border-white/5"
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-white font-bold text-lg">질문 항목 설정</h3>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => addFormItem('radio')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 객관식</button>
+                                            <button onClick={() => addFormItem('text')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 주관식</button>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-3">
+                                        {formItems.map((item, idx) => (
+                                            <motion.div key={item.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="p-2 bg-white/5 rounded-lg text-indigo-400">
+                                                        {item.type === 'text' ? <AlignLeft size={16} /> : <ListChecks size={16} />}
+                                                    </div>
+                                                    <input
+                                                        value={item.label}
+                                                        onChange={(e) => updateFormItem(item.id, { label: e.target.value })}
+                                                        placeholder="질문 내용을 입력하세요"
+                                                        className="flex-1 bg-transparent border-none outline-none text-white font-bold placeholder:text-gray-600"
+                                                    />
+                                                    <button onClick={() => removeFormItem(item.id)} className="p-2 hover:bg-red-500/20 rounded-lg text-gray-500 hover:text-red-400 transition-colors">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                </div>
+                                                {item.options && (
+                                                    <div className="ml-12 space-y-2">
+                                                        {item.options.map((opt, optIdx) => (
+                                                            <div key={optIdx} className="flex items-center gap-2">
+                                                                <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
+                                                                <input
+                                                                    value={opt}
+                                                                    onChange={(e) => {
+                                                                        const newOptions = [...(item.options || [])];
+                                                                        newOptions[optIdx] = e.target.value;
+                                                                        updateFormItem(item.id, { options: newOptions });
+                                                                    }}
+                                                                    className="flex-1 bg-transparent text-sm text-gray-300 outline-none border-b border-transparent focus:border-indigo-500/50 transition-colors placeholder:text-gray-700"
+                                                                    placeholder={`옵션 ${optIdx + 1}`}
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                        <button
+                                                            onClick={() => {
+                                                                const newOptions = [...(item.options || []), ''];
+                                                                updateFormItem(item.id, { options: newOptions });
+                                                            }}
+                                                            className="text-xs text-indigo-400 hover:text-indigo-300 font-bold mt-1"
+                                                        >
+                                                            + 옵션 추가
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                    <div className="flex items-center gap-2 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-xs text-indigo-300">
+                                        <AlertCircle size={14} />
+                                        <span>모든 회신형 문서에는 '서명'란이 자동 포함됩니다.</span>
+                                    </div>
+                                </motion.section>
+                            )}
+
+                            {/* SECTION 4: TARGET & DEADLINE & SUBMIT */}
+                            {docType && (
+                                <motion.section
+                                    initial={{ opacity: 0, y: 20 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    className="space-y-8 pt-4 border-t border-white/5"
+                                >
+                                    {/* Target */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                                            <Users size={20} className="text-indigo-400" /> 발송 대상
+                                        </h3>
+                                        <div className="space-y-4">
+                                            <div className="flex p-1 bg-black/20 rounded-xl">
+                                                {['all', 'grade', 'dept', 'student'].map((cat: any) => (
+                                                    <button
+                                                        key={cat}
+                                                        onClick={() => setTargetCategory(cat)}
+                                                        className={cn(
+                                                            "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                                                            targetCategory === cat ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
+                                                        )}
+                                                    >
+                                                        {cat === 'all' ? '전체' : cat === 'grade' ? '학년별' : cat === 'dept' ? '학과별' : '개별'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            {/* Sub Selectors (Simplified for waterfall) */}
+                                            {targetCategory === 'grade' && (
+                                                <div className="flex gap-2">
+                                                    {['1학년', '2학년', '3학년'].map(g => (
+                                                        <button key={g} onClick={() => toggleSelection(selectedGrades, g, setSelectedGrades)}
+                                                            className={cn("px-4 py-2 rounded-xl text-sm font-bold border", selectedGrades.includes(g) ? "bg-indigo-500/20 border-indigo-500 text-indigo-300" : "bg-white/5 border-white/10 text-gray-400")}>
+                                                            {g}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {targetCategory === 'dept' && (
+                                                <div className="flex flex-wrap gap-2">
+                                                    {DEPARTMENTS.map(d => (
+                                                        <button key={d.id} onClick={() => toggleSelection(selectedDepts, d.id, setSelectedDepts)}
+                                                            className={cn("px-4 py-2 rounded-xl text-sm font-bold border", selectedDepts.includes(d.id) ? "bg-indigo-500/20 border-indigo-500 text-indigo-300" : "bg-white/5 border-white/10 text-gray-400")}>
+                                                            {d.name}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                            {targetCategory === 'student' && (
+                                                <textarea
+                                                    value={targetStudents}
+                                                    onChange={e => setTargetStudents(e.target.value)}
+                                                    placeholder="학번 입력 (예: 1101, 1102)"
+                                                    className="w-full h-20 bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-indigo-500/50 outline-none resize-none"
+                                                />
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Deadline */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                                            <Clock size={20} className="text-indigo-400" /> 제출 마감
+                                        </h3>
+                                        <div className="flex items-center justify-between bg-white/5 border border-white/5 p-4 rounded-2xl">
+                                            <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Minus size={18} /></button>
+                                            <div className="text-center">
+                                                <div className="text-xl font-black text-white">{formattedDeadline}</div>
+                                                <div className="text-xs text-gray-500 font-bold mt-1">까지 제출받기</div>
+                                            </div>
+                                            <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Plus size={18} /></button>
+                                        </div>
+                                    </div>
+
+                                    {/* Final Action Button */}
+                                    <div className="pt-6">
+                                        <button
+                                            onClick={startProcessing}
+                                            className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
+                                        >
+                                            <Send size={24} />
+                                            가정통신문 생성 및 발송
+                                        </button>
+                                    </div>
+                                </motion.section>
+                            )}
                         </motion.div>
                     )}
 
                 </AnimatePresence>
-            </div>
-
-            {/* Footer */}
-            <div className="p-6 border-t border-white/5 shrink-0">
-                {step === 'completed' ? (
-                    <button onClick={handleFinalize} className="w-full py-4 bg-white text-black hover:bg-gray-200 rounded-2xl font-black transition-colors">
-                        닫기
-                    </button>
-                ) : step !== 'processing' ? (
-                    <div className="flex gap-3">
-                        {step !== 'upload' && (
-                            <button
-                                onClick={() => {
-                                    if (step === 'type_select') setStep('upload');
-                                    else if (step === 'form_builder') setStep('type_select');
-                                    else if (step === 'settings') setStep(docType === 'notice' ? 'type_select' : 'form_builder');
-                                }}
-                                className="px-6 py-4 rounded-2xl bg-white/5 text-gray-400 font-bold hover:bg-white/10"
-                            >
-                                이전
-                            </button>
-                        )}
-                        <button
-                            onClick={() => {
-                                if (step === 'upload') {
-                                    if (!title || !file) return alert('제목과 파일을 확인해주세요');
-                                    setStep('type_select');
-                                } else if (step === 'type_select') {
-                                    // Managed in selection handler
-                                } else if (step === 'form_builder') {
-                                    setStep('settings');
-                                } else if (step === 'settings') {
-                                    startProcessing();
-                                }
-                            }}
-                            className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black shadow-lg shadow-indigo-500/30 transition-all"
-                        >
-                            {step === 'settings' ? '가정통신문 생성하기' : '다음 단계로'}
-                        </button>
-                    </div>
-                ) : null}
             </div>
         </div>
     );
