@@ -59,18 +59,20 @@ export async function GET() {
         const csvText = await response.text();
         const parsedData = parseCSV(csvText);
 
-        // Transform to Student interface structure
-        const students = parsedData.map((row) => ({
-            id: row['PID'] || `STU-${row['학번']}`,
-            grade: parseInt(row['학년']) || 1,
-            class_num: parseInt(row['반']) || 1,
-            student_num: parseInt(row['학번']) || 0,
-            name: row['이름'] || 'Unknown',
-            submitted: false, // Default status
-            // Additional fields can be mapped here if needed
-            phone: row['학생폰'],
-            parent_phone: row['모(연락처)'] || row['부(연락처)']
-        }));
+        // Transform to Student interface structure, filtering out students with '학적' status (e.g., 전학, 자퇴)
+        const students = parsedData
+            .filter(row => !row['학적'] || row['학적'].trim() === '') // Only include empty status
+            .map((row) => ({
+                id: row['PID'] || `STU-${row['학번']}`,
+                grade: parseInt(row['학년']) || 1,
+                class_num: parseInt(row['반']) || 1,
+                student_num: parseInt(row['학번']) || 0,
+                name: row['이름'] || 'Unknown',
+                submitted: false, // Default status
+                // Additional fields can be mapped here if needed
+                phone: row['학생폰'],
+                parent_phone: row['모(연락처)'] || row['부(연락처)']
+            }));
 
         // Sort by student number
         students.sort((a, b) => a.student_num - b.student_num);

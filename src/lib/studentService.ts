@@ -49,14 +49,19 @@ export async function getStudentsWithSubmission(docId: string, grade: number, cl
     } catch (error) {
         console.warn('Supabase fetch failed, falling back to offline mock data:', error);
         // Fallback Mock Data
+        // Fallback Mock Data
+        // Simple hash to vary count based on docId
+        const seed = docId ? docId.charCodeAt(docId.length - 1) : 15;
+        const submittedCount = (seed % 20) + 1; // 1 to 20 submitted
+
         return Array.from({ length: 24 }, (_, i) => ({
             id: `mock-${i}`,
             grade,
             class_num: classNum,
             student_num: i + 1,
-            name: `학생 ${i + 1}`, // Fixing type issue (string)
-            submitted: i < 15, // Some submitted
-            submittedAt: i < 15 ? new Date().toISOString() : undefined,
+            name: `학생 ${i + 1}`,
+            submitted: i < submittedCount,
+            submittedAt: i < submittedCount ? new Date().toISOString() : undefined,
         })) as any;
     }
 }

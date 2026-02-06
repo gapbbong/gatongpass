@@ -17,6 +17,7 @@ import DashboardLayout from '@/components/admin/DashboardLayout';
 import ActiveDocumentViewer from '@/components/admin/ActiveDocumentViewer';
 import SubmissionStats from '@/components/admin/SubmissionStats';
 import CorrespondenceWizard from '@/components/admin/CorrespondenceWizard';
+import SchoolSettingsModal from '@/components/admin/SchoolSettingsModal';
 
 // Services
 import { getDocuments } from '@/lib/docService';
@@ -44,6 +45,7 @@ function AdminDashboardContent() {
     const [documents, setDocuments] = useState<Document[]>([]);
     const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false); // Settings Modal State
 
     // View Mode: 'analytics' (default) or 'create' (wizard)
     const [viewMode, setViewMode] = useState<'analytics' | 'create'>('create');
@@ -56,7 +58,8 @@ function AdminDashboardContent() {
     const fetchStudents = useCallback(async () => {
         setIsStudentsLoading(true);
         // Assuming 3rd grade, 1st class for now
-        const data = await getStudentsWithSubmission('', 3, 1);
+        // Pass selectedDocId to get document-specific status
+        const data = await getStudentsWithSubmission(selectedDocId || '', 3, 1);
         if (data && data.length > 0) {
             setStudents(data);
         } else {
@@ -64,7 +67,7 @@ function AdminDashboardContent() {
             if (seeded) setStudents(seeded.map(s => ({ ...s, submitted: false })));
         }
         setIsStudentsLoading(false);
-    }, []);
+    }, [selectedDocId]); // Re-fetch when doc changes
 
     useEffect(() => {
         fetchStudents();
@@ -146,63 +149,62 @@ function AdminDashboardContent() {
             </div>
 
             {/* Document List (Scrollable) */}
+            {/* Document List (Scrollable) */}
             <div className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-2 pb-4">
-                {viewMode === 'create' ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center p-4 opacity-30">
-                        <FileText size={48} className="mb-2" />
-                        <p className="text-xs">새 문서 작성 중에는<br />목록이 숨겨집니다.</p>
-                        <button
-                            onClick={() => setViewMode('analytics')}
-                            className="mt-4 px-3 py-1 bg-white/10 rounded text-xs hover:bg-white/20 transition-colors"
-                        >
-                            목록 보기
-                        </button>
-                    </div>
-                ) : (
-                    documents.map((doc) => (
-                        <button
-                            key={doc.id}
-                            onClick={() => {
-                                setSelectedDocId(doc.id);
-                                setViewMode('analytics');
-                            }}
-                            className={cn(
-                                "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97] border",
-                                selectedDocId === doc.id
-                                    ? "bg-white/[0.08] border-indigo-500/50 shadow-xl"
-                                    : "bg-transparent border-transparent hover:bg-white/[0.03]"
-                            )}
-                        >
-                            <div className="flex justify-between items-start mb-2">
-                                <span className={cn(
-                                    "text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest border",
-                                    doc.type === 'action'
-                                        ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                        : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
-                                )}>
-                                    {doc.type === 'action' ? '서명' : '안내'}
-                                </span>
-                                <span className="text-[10px] text-gray-500 font-mono">
-                                    {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
-                                </span>
-                            </div>
-                            <h4 className={cn(
-                                "text-sm font-bold leading-snug line-clamp-2 transition-colors mb-2",
-                                selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
+                {documents.map((doc) => (
+                    <button
+                        key={doc.id}
+                        onClick={() => {
+                            setSelectedDocId(doc.id);
+                            setViewMode('analytics');
+                        }}
+                        className={cn(
+                            "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97] border",
+                            selectedDocId === doc.id
+                                ? "bg-white/[0.08] border-indigo-500/50 shadow-xl"
+                                : "bg-transparent border-transparent hover:bg-white/[0.03]"
+                        )}
+                    >
+                        <div className="flex justify-between items-start mb-2">
+                            <span className={cn(
+                                "text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest border",
+                                doc.type === 'action'
+                                    ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                    : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
                             )}>
-                                {doc.title}
-                            </h4>
+                                {doc.type === 'action' ? '서명' : '안내'}
+                            </span>
+                            <span className="text-[10px] text-gray-500 font-mono">
+                                {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
+                            </span>
+                        </div>
+                        <h4 className={cn(
+                            "text-sm font-bold leading-snug line-clamp-2 transition-colors mb-2",
+                            selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
+                        )}>
+                            {doc.title}
+                        </h4>
 
-                            {/* Progress Bar in List */}
-                            <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                                <div
-                                    className={cn("h-full rounded-full transition-all duration-500", doc.status === 'completed' ? "bg-emerald-500" : "bg-indigo-500")}
-                                    style={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
-                                />
-                            </div>
-                        </button>
-                    ))
-                )}
+                        {/* Progress Bar in List */}
+                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                            <div
+                                className={cn("h-full rounded-full transition-all duration-500", doc.status === 'completed' ? "bg-emerald-500" : "bg-indigo-500")}
+                                style={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
+                            />
+                        </div>
+                    </button>
+                ))}
+            </div>
+
+            {/* School Settings Button */}
+            <div className="px-4 mb-2">
+                <button
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="w-full flex items-center gap-3 p-3 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 hover:text-white transition-colors border border-indigo-500/20 shadow-lg shadow-indigo-900/20"
+                >
+                    <Settings size={18} />
+                    <span className="font-bold text-sm">학교 설정</span>
+                </button>
             </div>
 
             {/* Fixed Bottom: Settings */}
@@ -240,20 +242,8 @@ function AdminDashboardContent() {
     // --- Column 3: Manager (Stats & List) ---
     const stats = (
         <div className="flex flex-col h-full bg-secondary/20 relative">
-            {/* Top: Stats Summary */}
-            <div className="shrink-0">
-                <SubmissionStats
-                    document={selectedDoc ? {
-                        title: selectedDoc.title,
-                        submittedCount: selectedDoc.submitted_count,
-                        totalCount: selectedDoc.total_count,
-                        deadline: selectedDoc.deadline || ''
-                    } : null}
-                />
-            </div>
-
-            {/* Middle: Student List */}
-            <div className="flex-1 overflow-hidden flex flex-col border-t border-white/5">
+            {/* Student List View takes full height */}
+            <div className="flex-1 overflow-hidden flex flex-col">
                 <StudentListView students={students} loading={isStudentsLoading} />
             </div>
         </div>
@@ -330,7 +320,7 @@ function AdminDashboardContent() {
                                 <p className="text-sm font-medium leading-relaxed opacity-90 mb-4">
                                     아직 작성된 가정통신문이 없네요.<br />
                                     <strong>[새 가정통신문 만들기]</strong> 버튼을 눌러서<br />
-                                    첫 번째 통신문을 30초 만에 만들어보세요!
+                                    첫 번째 통신문을 만들어보세요!
                                 </p>
 
                                 <div className="flex flex-col gap-3">
@@ -356,6 +346,8 @@ function AdminDashboardContent() {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            <SchoolSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
         </>
     );
 }
@@ -364,12 +356,20 @@ function AdminDashboardContent() {
 function LinkLogo() {
     return (
         <div className="flex items-center gap-3 select-none transform origin-left transition-all duration-300">
-            <div className="w-9 h-9 nav-logo-icon rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                <span className="font-black text-white text-lg">G</span>
+            <div className="w-9 h-9 nav-logo-icon rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/30">
+                <span className="font-black text-white text-lg">가</span>
             </div>
             <div className="flex flex-col nav-logo-text leading-none">
-                <span className="font-black text-base text-white tracking-tight">GATONG</span>
-                <span className="text-[10px] font-bold text-indigo-400 tracking-widest uppercase">PASS ADMIN</span>
+                <div className="flex items-baseline text-white gap-[1px]">
+                    <span className="font-black text-xl">가</span>
+                    <span className="text-xs font-bold opacity-30">정</span>
+                    <span className="font-black text-xl">통</span>
+                    <span className="text-xs font-bold opacity-30">신문</span>
+                    <span className="font-black text-xl text-indigo-400 ml-1">패스</span>
+                </div>
+                <div className="mt-0.5">
+                    <span className="text-[8px] font-bold text-indigo-500/30 uppercase tracking-[0.2em] ml-0.5">ADMIN</span>
+                </div>
             </div>
         </div>
     );
@@ -399,3 +399,4 @@ export default function AdminDashboard() {
         </Suspense>
     );
 }
+

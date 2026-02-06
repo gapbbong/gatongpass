@@ -31,16 +31,12 @@ interface CorrespondenceWizardProps {
 }
 
 // --- Target Audience Definitions ---
-const DEPARTMENTS = [
-    { id: 'iot', name: 'IoT전기과' },
-    { id: 'game', name: '게임콘텐츠과' }
-];
-
-const GRADES = ['1', '2', '3'];
+// --- Constants removed in favor of schoolConfig ---
 
 export default function CorrespondenceWizard({ onSuccess, onCancel }: CorrespondenceWizardProps) {
     // --- State ---
     const [step, setStep] = useState<Step>('input');
+    const [showPreview, setShowPreview] = useState(false);
 
     // 1. File & Basic Info
     const [file, setFile] = useState<File | null>(null);
@@ -54,14 +50,37 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     const [formItems, setFormItems] = useState<FormItem[]>([]);
 
     // 3. Settings (Target & Deadline)
-    const [targetCategory, setTargetCategory] = useState<'all' | 'grade' | 'dept' | 'student'>('all');
-    const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
-    const [selectedDepts, setSelectedDepts] = useState<string[]>([]);
+    // 3. Settings (Target & Deadline)
+    const [targetCategory, setTargetCategory] = useState<'group' | 'student'>('group');
+    const [selectedGrades, setSelectedGrades] = useState<number[]>([1, 2, 3]);
+    const [selectedClasses, setSelectedClasses] = useState<number[]>([1, 2, 3, 4, 5, 6]);
     const [targetStudents, setTargetStudents] = useState<string>(''); // Comma separated
+
+    // School Config & Real Logic
+    const [schoolConfig, setSchoolConfig] = useState<any>(null);
+    const [allStudents, setAllStudents] = useState<any[]>([]);
+
+    useEffect(() => {
+        // Load Config
+        import('@/lib/schoolConfig').then(mod => {
+            setSchoolConfig(mod.getSchoolConfig());
+        });
+
+        // Load Real Students
+        fetch('/api/students/import')
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    setAllStudents(data.students);
+                }
+            })
+            .catch(err => console.error("Failed to fetch students", err));
+    }, []);
 
     const [deadline, setDeadline] = useState<Date>(() => {
         const d = new Date();
         d.setDate(d.getDate() + 3); // Default +3 days
+        d.setHours(8, 0, 0, 0); // Default 08:00 AM
         return d;
     });
 
@@ -71,110 +90,94 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
     // --- Handlers ---
 
-    // OCR Analysis
-    const analyzeImage = async (file: File) => {
-        if (!file.type.startsWith('image/')) return;
+    // ... OCR (omitted for brevity, keep existing) ...
 
+    const calculateTotalTarget = () => {
+        if (!schoolConfig) return 0;
+
+        // 1. Individual
+        if (targetCategory === 'student') return targetStudents.split(',').filter(s => s.trim()).length;
+
+        // 2. Group Selection
+        // Filter by selected grades AND selected classes
+        if (selectedGrades.length === 0 || selectedClasses.length === 0) return 0;
+
+        const filtered = allStudents.filter(s => {
+            return selectedGrades.includes(s.grade) && selectedClasses.includes(s.class_num);
+        });
+
+        return filtered.length;
+    };
+
+    // ... Existing OCR Analysis and Drops ...
+    const analyzeImage = async (file: File) => {
+        // ... existing code ...
+        if (!file.type.startsWith('image/')) return;
         setIsAnalyzing(true);
-        setTitleCandidates([]); // 초기화
+        setTitleCandidates([]);
 
         try {
             const { data }: any = await Tesseract.recognize(
                 file,
-                'kor', // 한글 우선
+                'kor',
             );
-
-            // 3. 개선된 OCR 전략
+            // ... strict copy of existing OCR logic ...
             const rawList: string[] = [];
             const scoredCandidates: { text: string, score: number }[] = [];
 
-            // 헬퍼: 텍스트 처리 및 점수화
             const processText = (originalText: string, height: number, yPos: number, pageHeight: number) => {
                 const clean = originalText.replace(/\s+/g, ' ').trim();
                 const display = clean.replace(/[|\]\[_『「」』=—]/g, '').trim();
-
                 if (display.length < 2) return;
-
-                // 후보 리스트에는 (중복 아니면) 무조건 추가
-                if (!rawList.includes(display)) {
-                    rawList.push(display);
-                }
-
-                // 점수 계산 (자동 입력용)
-                let score = height; // 기본 점수는 글자 크기
-
-                // 상단 배치 우대 (문서 상단 30% 이내면 가산점)
+                if (!rawList.includes(display)) rawList.push(display);
+                let score = height;
                 if (pageHeight > 0 && (yPos / pageHeight) < 0.35) score += 20;
-
-                // 헤더성 텍스트 감점
                 if (/발행처|발행인|발행일|교무실|행정실|FAX|홈페이지|http|www|제\s*[0-9]+호/.test(display)) score -= 50;
-                if (/가정통신문/.test(display)) score -= 30; // '가정통신문'라는 단어 자체는 제목이 아닐 확률 높음
-                if (/^\d{4}[\.\-]\s*\d{1,2}[\.\-]\s*\d{1,2}[\.]?$/.test(display)) score -= 30; // 날짜 감점
-
-                // 괄호로 강조된 텍스트 가산점
+                if (/가정통신문/.test(display)) score -= 30;
+                if (/^\d{4}[\.\-]\s*\d{1,2}[\.\-]\s*\d{1,2}[\.]?$/.test(display)) score -= 30;
                 if (/[『「\[]/.test(originalText)) score += 30;
-
                 scoredCandidates.push({ text: display, score });
             };
 
-            // 1. Line 기반 분석
             const lines = data.lines || [];
             const pageHeight = data.text && lines.length > 0 ? lines[lines.length - 1].bbox.y1 : 1000;
-
             lines.forEach((line: any) => {
                 const h = line.bbox.y1 - line.bbox.y0;
                 processText(line.text, h, line.bbox.y0, pageHeight);
             });
 
-            // 2. Fallback: 줄바꿈 기반 분석 (라인 인식이 잘 안됐거나 후보가 적을 때)
             if (rawList.length < 5 && data.text) {
                 const splits = data.text.split('\n');
                 splits.forEach((s: string, idx: number) => {
-                    // Height 정보 부재 -> 기본값 10, 위치는 대략 추정
                     processText(s, 10, idx * 30, 1000);
                 });
             }
 
-            // 결과 적용
-            // 리스트: 상위 10개까지 넉넉하게
             setTitleCandidates(rawList.slice(0, 10));
-
-            // 자동 입력: 점수가 가장 높은 것
             scoredCandidates.sort((a, b) => b.score - a.score);
             const bestPick = scoredCandidates.length > 0 ? scoredCandidates[0].text : "";
 
-            // 제목 설정
-            if (bestPick) {
-                setTitle(bestPick);
-            } else if (rawList.length > 0) {
-                setTitle(rawList[0]);
-            } else {
-                // 정말 아무것도 못 찾았을 때
-                const fallbackName = file.name === 'image.png'
-                    ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분`
-                    : file.name.replace(/\.[^/.]+$/, "");
+            if (bestPick) setTitle(bestPick);
+            else if (rawList.length > 0) setTitle(rawList[0]);
+            else {
+                const fallbackName = file.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : file.name.replace(/\.[^/.]+$/, "");
                 setTitle(fallbackName);
             }
-
             setShowTitleHint(true);
         } catch (err) {
             console.error("OCR Error", err);
-            // 에러 시 기본값
-            const fallbackName = file.name === 'image.png'
-                ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분`
-                : file.name.replace(/\.[^/.]+$/, "");
+            const fallbackName = file.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : file.name.replace(/\.[^/.]+$/, "");
             setTitle(fallbackName);
         } finally {
             setIsAnalyzing(false);
         }
     };
 
-    // File Drop
+    // ... Dropzone ...
     const onDrop = useCallback((acceptedFiles: File[]) => {
         if (acceptedFiles.length > 0) {
             const f = acceptedFiles[0];
             setFile(f);
-            // setTitle 제거 (OCR 결과 대기)
             analyzeImage(f);
         }
     }, [title]);
@@ -182,63 +185,46 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
         onDropRejected: () => alert('지원되지 않는 파일 형식입니다.\nPDF 또는 이미지(JPG, PNG) 파일만 업로드해주세요.'),
-        accept: {
-            'application/pdf': ['.pdf'],
-            'image/jpeg': ['.jpg', '.jpeg'],
-            'image/png': ['.png']
-        },
+        accept: { 'application/pdf': ['.pdf'], 'image/jpeg': ['.jpg', '.jpeg'], 'image/png': ['.png'] },
         multiple: false
     });
 
     const titleInputRef = useRef<HTMLInputElement>(null);
-
-    // Paste Handler
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
             if (step !== 'input') return;
-
             const items = e.clipboardData?.items;
             if (!items) return;
-
             for (let i = 0; i < items.length; i++) {
                 const item = items[i];
                 if (item.type.indexOf('image') !== -1 || item.type === 'application/pdf') {
                     const blob = item.getAsFile();
                     if (blob) {
                         setFile(blob);
-                        if (blob.type.startsWith('image/')) {
-                            analyzeImage(blob);
-                        } else {
-                            setTitle(blob.name.replace(/\.[^/.]+$/, ""));
-                        }
+                        if (blob.type.startsWith('image/')) analyzeImage(blob);
+                        else setTitle(blob.name.replace(/\.[^/.]+$/, ""));
                     }
                     break;
                 }
             }
         };
-
         window.addEventListener('paste', handlePaste);
         return () => window.removeEventListener('paste', handlePaste);
     }, [step, title]);
 
-    // Type Selection
+    // ... Type Selection ...
     const selectType = (type: 'notice' | 'action') => {
         setDocType(type);
-        // Automatically handled by conditional rendering
-        if (type === 'notice') {
-            setFormItems([]);
-        } else {
-            // If action, add default items if empty
-            if (formItems.length === 0) {
-                setFormItems([
-                    { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
-                    { id: '2', type: 'signature', label: '보호자 서명', required: true }
-                ]);
-            }
+        if (type === 'notice') setFormItems([]);
+        else if (formItems.length === 0) {
+            setFormItems([
+                { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
+                { id: '2', type: 'signature', label: '보호자 서명', required: true }
+            ]);
         }
     };
 
-    // Form Builder Helpers
+    // ... Form Builder Helpers ...
     const addFormItem = (type: FormItem['type']) => {
         setFormItems(prev => [...prev, {
             id: Date.now().toString(),
@@ -255,44 +241,84 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         setFormItems(prev => prev.filter(item => item.id !== id));
     };
 
-    // Deadline Helpers
+    // ... Deadline Helpers ...
     const adjustDeadline = (days: number) => {
         const newDate = new Date(deadline);
         newDate.setDate(newDate.getDate() + days);
-
-        // Min date check (tomorrow)
         const tomorrow = new Date();
         tomorrow.setDate(tomorrow.getDate() + 1);
         tomorrow.setHours(0, 0, 0, 0);
-
         if (newDate < tomorrow) return;
         setDeadline(newDate);
     };
 
-    // Format Date for UI
     const formattedDeadline = deadline.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
 
-    // Target Helpers
-    const toggleSelection = (list: string[], item: string, setList: React.Dispatch<React.SetStateAction<string[]>>) => {
-        if (list.includes(item)) setList(list.filter(i => i !== item));
-        else setList([...list, item]);
+    // ... Target Helpers ...
+    const toggleGrade = (grade: number) => {
+        if (selectedGrades.includes(grade)) {
+            setSelectedGrades(prev => prev.filter(g => g !== grade));
+        } else {
+            setSelectedGrades(prev => [...prev, grade]);
+            // If no classes selected or just a few, auto-select all 1-6 for convenience
+            if (selectedClasses.length < 6) {
+                setSelectedClasses([1, 2, 3, 4, 5, 6]);
+            }
+        }
     };
 
-    // Sheet Creation & Finalize
+    const toggleClass = (classNum: number) => {
+        if (selectedClasses.includes(classNum)) {
+            setSelectedClasses(prev => prev.filter(c => c !== classNum));
+        } else {
+            setSelectedClasses(prev => [...prev, classNum]);
+        }
+    };
+
+    const selectAllStudents = () => {
+        if (selectedGrades.length === schoolConfig.grades.length && selectedClasses.length === 6) {
+            setSelectedGrades([]);
+            setSelectedClasses([]);
+        } else {
+            setSelectedGrades(schoolConfig.grades);
+            setSelectedClasses([1, 2, 3, 4, 5, 6]);
+        }
+    };
+
+    const selectDept = (dept: any) => {
+        const range = [];
+        for (let i = dept.classRange.start; i <= dept.classRange.end; i++) {
+            range.push(i);
+        }
+        setSelectedClasses(range);
+        // Ensure at least one grade is selected if none are
+        if (selectedGrades.length === 0 && schoolConfig) {
+            setSelectedGrades(schoolConfig.grades);
+        }
+    };
+
+    // ... Sheet Creation & Finalize ...
     const startProcessing = async () => {
         if (!title.trim()) {
             alert('제목을 입력해주세요.');
             titleInputRef.current?.focus();
             return;
         }
-
         setStep('processing');
         setIsSheetCreating(true);
-
-        // 1. Simulate Google Sheet Creation
         await new Promise(resolve => setTimeout(resolve, 2000));
-
-        // 2. Create Doc Data
+        let fileData = null;
+        if (file) {
+            try {
+                fileData = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.readAsDataURL(file);
+                });
+            } catch (e) {
+                console.error("File read error", e);
+            }
+        }
         const newDoc = {
             id: Date.now().toString(),
             title: title,
@@ -300,51 +326,43 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
             created_at: new Date().toISOString(),
             status: 'ongoing',
             submitted_count: 0,
-            total_count: calculateTotalTarget(), // Mock calc
+            total_count: calculateTotalTarget(),
             deadline: deadline.toISOString(),
             formItems: formItems,
-            sheetUrl: "https://docs.google.com/spreadsheets/d/mock-sheet-id", // Mock URL
-            targetSummary: getTargetSummary()
+            sheetUrl: "https://docs.google.com/spreadsheets/d/mock-sheet-id",
+            targetSummary: getTargetSummary(),
+            fileData: fileData,
+            fileType: file?.type
         };
-
-        // 3. Save to LocalStorage for Demo
         const savedDocs = JSON.parse(localStorage.getItem('gatong_docs') || '[]');
         savedDocs.push(newDoc);
         localStorage.setItem('gatong_docs', JSON.stringify(savedDocs));
-
         setTempDoc(newDoc);
         setIsSheetCreating(false);
         setStep('completed');
     };
 
     const getTargetSummary = () => {
-        if (targetCategory === 'all') return '전교생';
         if (targetCategory === 'student') return `개별 학생 (${targetStudents.split(',').filter(s => s.trim()).length}명)`;
 
-        const parts = [];
-        if (selectedGrades.length > 0) parts.push(`${selectedGrades.join(',')}학년`);
-        if (selectedDepts.length > 0) parts.push(`${selectedDepts.map(d => d === 'iot' ? 'IoT' : '게임').join(',')}과`);
+        if (selectedGrades.length === schoolConfig?.grades.length && selectedClasses.length === 6) return '전교생';
 
-        if (parts.length === 0) return '전체';
+        const parts = [];
+        if (selectedGrades.length > 0) {
+            parts.push(`${selectedGrades.join(',')}학년`);
+        }
+        if (selectedClasses.length > 0) {
+            if (selectedClasses.length === 6) parts.push('전체 반');
+            else parts.push(`${selectedClasses.join(',')}반`);
+        }
+
+        if (parts.length === 0) return '없음';
         return parts.join(' ');
     };
 
-    const calculateTotalTarget = () => {
-        // Just mock numbers based on selection
-        if (targetCategory === 'all') return 450;
-        if (targetCategory === 'student') return targetStudents.split(',').length;
-        let base = 100;
-        if (selectedDepts.length > 0) base = base / 2 * selectedDepts.length;
-        if (selectedGrades.length > 0) base = base / 3 * selectedGrades.length;
-        return Math.floor(base);
-    };
-
     const handleFinalize = () => {
-        if (tempDoc) {
-            onSuccess(tempDoc); // Notify admin dashboard
-        } else {
-            onCancel();
-        }
+        if (tempDoc) onSuccess(tempDoc);
+        else onCancel();
     };
 
     const handleCopyText = () => {
@@ -369,7 +387,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                         </p>
                     </div>
                 </div>
-                <button onClick={onCancel} className="p-2 hover:bg-white/5 rounded-full text-gray-500 transition-colors">
+                <button onClick={() => step === 'completed' && tempDoc ? onSuccess(tempDoc) : onCancel()} className="p-2 hover:bg-white/5 rounded-full text-gray-500 transition-colors">
                     <X size={20} />
                 </button>
             </div>
@@ -395,7 +413,13 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
                     {/* COMPLETED VIEW */}
                     {step === 'completed' && tempDoc && (
-                        <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6">
+                        <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6 relative">
+                            <button
+                                onClick={() => setStep('input')}
+                                className="absolute left-0 top-0 p-2 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
+                            >
+                                <ChevronRight className="rotate-180" size={20} />
+                            </button>
                             <div className="text-center">
                                 <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.4)] mb-4 animate-bounce">
                                     <Check size={32} className="text-white" />
@@ -413,6 +437,12 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                 </div>
                                 <button onClick={handleCopyText} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
                                     <Copy size={14} /> 텍스트 복사
+                                </button>
+                                <button onClick={() => setShowPreview(true)} className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                    <Smartphone size={14} /> 학부모 화면 미리보기
+                                </button>
+                                <button onClick={() => onSuccess(tempDoc)} className="w-full py-4 mt-2 col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2">
+                                    <Check size={16} /> 확인 (대시보드로 이동)
                                 </button>
                             </div>
 
@@ -463,8 +493,11 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                         </>
                                     ) : (
                                         <>
-                                            <p className="text-white font-bold text-lg mb-1">이미지나 PDF 파일을 이곳에 드래그하세요</p>
-                                            <p className="text-gray-500 text-sm">JPG, PNG, PDF 지원<br />또는 이미지를 붙여넣으세요 (Ctrl+V)</p>
+                                            <p className="text-white font-bold text-lg mb-1">파일을 드래그하거나 클릭하여 업로드</p>
+                                            <p className="text-gray-500 text-sm mb-2">JPG, PNG, PDF 지원</p>
+                                            <div className="text-indigo-300 text-xs font-bold bg-indigo-500/10 px-3 py-1.5 rounded-full inline-block">
+                                                💡 이미지를 복사했다면 클릭 없이 바로 <strong>Ctrl+V</strong>
+                                            </div>
                                         </>
                                     )}
                                 </div>
@@ -599,9 +632,11 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                                         placeholder="질문 내용을 입력하세요"
                                                         className="flex-1 bg-transparent border-none outline-none text-white font-bold placeholder:text-gray-600"
                                                     />
-                                                    <button onClick={() => removeFormItem(item.id)} className="p-2 hover:bg-red-500/20 rounded-lg text-gray-500 hover:text-red-400 transition-colors">
-                                                        <Trash2 size={16} />
-                                                    </button>
+                                                    {item.type !== 'signature' && (
+                                                        <button onClick={() => removeFormItem(item.id)} className="p-2 hover:bg-red-500/20 rounded-lg text-gray-500 hover:text-red-400 transition-colors">
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    )}
                                                 </div>
                                                 {item.options && (
                                                     <div className="ml-12 space-y-2">
@@ -652,50 +687,113 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                     <div className="space-y-4">
                                         <h3 className="text-white font-bold text-lg flex items-center gap-2">
                                             <Users size={20} className="text-indigo-400" /> 발송 대상
+                                            <span className="text-sm font-normal text-indigo-300 ml-2">
+                                                (전체 - {calculateTotalTarget()}명)
+                                            </span>
                                         </h3>
-                                        <div className="space-y-4">
+                                        <div className="space-y-6">
                                             <div className="flex p-1 bg-black/20 rounded-xl">
-                                                {['all', 'grade', 'dept', 'student'].map((cat: any) => (
-                                                    <button
-                                                        key={cat}
-                                                        onClick={() => setTargetCategory(cat)}
-                                                        className={cn(
-                                                            "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
-                                                            targetCategory === cat ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
-                                                        )}
-                                                    >
-                                                        {cat === 'all' ? '전체' : cat === 'grade' ? '학년별' : cat === 'dept' ? '학과별' : '개별'}
-                                                    </button>
-                                                ))}
+                                                <button
+                                                    onClick={() => setTargetCategory('group')}
+                                                    className={cn(
+                                                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                                                        targetCategory === 'group' ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
+                                                    )}
+                                                >
+                                                    그룹 선택
+                                                </button>
+                                                <button
+                                                    onClick={() => setTargetCategory('student')}
+                                                    className={cn(
+                                                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
+                                                        targetCategory === 'student' ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
+                                                    )}
+                                                >
+                                                    개별 입력
+                                                </button>
                                             </div>
-                                            {/* Sub Selectors (Simplified for waterfall) */}
-                                            {targetCategory === 'grade' && (
-                                                <div className="flex gap-2">
-                                                    {['1학년', '2학년', '3학년'].map(g => (
-                                                        <button key={g} onClick={() => toggleSelection(selectedGrades, g, setSelectedGrades)}
-                                                            className={cn("px-4 py-2 rounded-xl text-sm font-bold border", selectedGrades.includes(g) ? "bg-indigo-500/20 border-indigo-500 text-indigo-300" : "bg-white/5 border-white/10 text-gray-400")}>
-                                                            {g}
+
+                                            {targetCategory === 'group' && schoolConfig && (
+                                                <div className="space-y-6">
+                                                    {/* Quick Actions */}
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={selectAllStudents}
+                                                            className={cn(
+                                                                "flex-1 py-2 rounded-xl text-xs font-bold border transition-all",
+                                                                (selectedGrades.length === schoolConfig.grades.length && selectedClasses.length === 6)
+                                                                    ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                                                                    : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
+                                                            )}
+                                                        >
+                                                            전교생
                                                         </button>
-                                                    ))}
+                                                        {schoolConfig.departments.map((dept: any) => (
+                                                            <button
+                                                                key={dept.id}
+                                                                onClick={() => selectDept(dept)}
+                                                                className="flex-1 py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold text-gray-400 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-300 transition-all"
+                                                            >
+                                                                {dept.name}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+
+                                                    {/* Grade Selection */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">학년</label>
+                                                        <div className="grid grid-cols-3 gap-2">
+                                                            {schoolConfig.grades.map((g: number) => (
+                                                                <button
+                                                                    key={g}
+                                                                    onClick={() => toggleGrade(g)}
+                                                                    className={cn(
+                                                                        "py-3 rounded-xl text-sm font-black border transition-all",
+                                                                        selectedGrades.includes(g)
+                                                                            ? "bg-indigo-500/20 border-indigo-500 text-indigo-300 shadow-inner shadow-indigo-500/10"
+                                                                            : "bg-white/5 border-white/10 text-gray-500 hover:bg-white/10"
+                                                                    )}
+                                                                >
+                                                                    {g}학년
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Class Selection */}
+                                                    <div className="space-y-2">
+                                                        <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">반</label>
+                                                        <div className="grid grid-cols-6 gap-2">
+                                                            {[1, 2, 3, 4, 5, 6].map((c) => (
+                                                                <button
+                                                                    key={c}
+                                                                    onClick={() => toggleClass(c)}
+                                                                    className={cn(
+                                                                        "aspect-square rounded-xl text-sm font-black border transition-all flex items-center justify-center",
+                                                                        selectedClasses.includes(c)
+                                                                            ? "bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30"
+                                                                            : "bg-white/5 border-white/10 text-gray-600 hover:bg-white/10 hover:text-gray-400"
+                                                                    )}
+                                                                >
+                                                                    {c}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             )}
-                                            {targetCategory === 'dept' && (
-                                                <div className="flex flex-wrap gap-2">
-                                                    {DEPARTMENTS.map(d => (
-                                                        <button key={d.id} onClick={() => toggleSelection(selectedDepts, d.id, setSelectedDepts)}
-                                                            className={cn("px-4 py-2 rounded-xl text-sm font-bold border", selectedDepts.includes(d.id) ? "bg-indigo-500/20 border-indigo-500 text-indigo-300" : "bg-white/5 border-white/10 text-gray-400")}>
-                                                            {d.name}
-                                                        </button>
-                                                    ))}
-                                                </div>
-                                            )}
+
                                             {targetCategory === 'student' && (
-                                                <textarea
-                                                    value={targetStudents}
-                                                    onChange={e => setTargetStudents(e.target.value)}
-                                                    placeholder="학번 입력 (예: 1101, 1102)"
-                                                    className="w-full h-20 bg-black/20 border border-white/10 rounded-xl p-3 text-sm text-white focus:border-indigo-500/50 outline-none resize-none"
-                                                />
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">개별 학번 입력</label>
+                                                    <textarea
+                                                        value={targetStudents}
+                                                        onChange={e => setTargetStudents(e.target.value)}
+                                                        placeholder="학번 입력 (예: 1101, 1102)"
+                                                        className="w-full h-24 bg-black/20 border border-white/10 rounded-xl p-4 text-sm text-white focus:border-indigo-500/50 outline-none resize-none font-mono"
+                                                    />
+                                                    <p className="text-[10px] text-gray-600">콤마(,) 또는 공백으로 구분하여 입력하세요.</p>
+                                                </div>
                                             )}
                                         </div>
                                     </div>
@@ -704,12 +802,17 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                     <div className="space-y-4">
                                         <h3 className="text-white font-bold text-lg flex items-center gap-2">
                                             <Clock size={20} className="text-indigo-400" /> 제출 마감
+                                            <span className="text-xs text-indigo-400 font-normal ml-1">
+                                                (오늘로부터 {Math.ceil((new Date(deadline).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24))}일 뒤)
+                                            </span>
                                         </h3>
                                         <div className="flex items-center justify-between bg-white/5 border border-white/5 p-4 rounded-2xl">
                                             <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Minus size={18} /></button>
                                             <div className="text-center">
                                                 <div className="text-xl font-black text-white">{formattedDeadline}</div>
-                                                <div className="text-xs text-gray-500 font-bold mt-1">까지 제출받기</div>
+                                                <div className="text-xs text-gray-500 font-bold mt-1">
+                                                    오전 8시 마감
+                                                </div>
                                             </div>
                                             <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Plus size={18} /></button>
                                         </div>
@@ -722,7 +825,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                             className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
                                         >
                                             <Send size={24} />
-                                            가정통신문 생성 및 발송
+                                            발송 준비하기
                                         </button>
                                     </div>
                                 </motion.section>
@@ -732,6 +835,49 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
                 </AnimatePresence>
             </div>
+
+            {/* Inline Preview Modal */}
+            <AnimatePresence>
+                {showPreview && tempDoc && (
+                    <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                        onClick={() => setShowPreview(false)}
+                    >
+                        <motion.div
+                            initial={{ scale: 0.9, y: 20 }}
+                            animate={{ scale: 1, y: 0 }}
+                            exit={{ scale: 0.9, y: 20 }}
+                            onClick={(e) => e.stopPropagation()}
+                            className="bg-zinc-900 border border-white/10 rounded-[3rem] p-3 shadow-2xl relative w-full max-w-[375px] h-[80vh] flex flex-col"
+                        >
+                            {/* Phone Frame Header */}
+                            <div className="h-6 flex justify-center items-center mb-2">
+                                <div className="w-20 h-1 bg-white/20 rounded-full"></div>
+                            </div>
+
+                            {/* Content */}
+                            <div className="flex-1 bg-white rounded-[2rem] overflow-hidden relative">
+                                <iframe
+                                    src={`/s/${tempDoc.id}`}
+                                    className="w-full h-full border-0"
+                                    title="Student Preview"
+                                />
+                            </div>
+
+                            {/* Close Button */}
+                            <button
+                                onClick={() => setShowPreview(false)}
+                                className="absolute -right-12 top-0 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors"
+                            >
+                                <X size={24} />
+                            </button>
+                        </motion.div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

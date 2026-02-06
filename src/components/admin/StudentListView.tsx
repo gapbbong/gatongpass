@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, Filter, CheckCircle2, Circle, Clock, Mail, ChevronRight, User, Download } from 'lucide-react';
+import { Search, Filter, CheckCircle2, Circle, Clock, Mail, ChevronRight, User, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
@@ -80,25 +80,24 @@ export default function StudentListView({ students, loading }: StudentListViewPr
     return (
         <div className="flex flex-col h-full bg-background/20 backdrop-blur-md">
             {/* Header */}
-            <div className="p-8 pb-6 border-b border-white/[0.05]">
+            <div className="p-8 pb-3 border-b border-white/[0.05]">
                 <div className="flex justify-between items-end mb-8">
                     <div>
-                        <h2 className="text-3xl font-black text-white tracking-tight flex items-center gap-3">
+                        <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-3">
                             명렬표 관리
-                            <span className="text-xs bg-indigo-500/10 text-indigo-400 px-3 py-1 rounded-full border border-indigo-500/20">3학년 1반</span>
                         </h2>
                         <div className="flex items-center gap-3 mt-2">
-                            <p className="text-sm text-gray-500 font-bold uppercase tracking-widest">Student attendance & submission status</p>
+                            {/* English subtitle removed for simplicity */}
                             <button
                                 onClick={handleImport}
                                 disabled={isImporting}
                                 className={cn(
-                                    "text-[10px] bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white px-2 py-1 rounded border border-white/10 transition-colors uppercase tracking-wider flex items-center gap-1",
+                                    "text-xs bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white px-3 py-1.5 rounded-lg border border-white/10 transition-colors flex items-center gap-2",
                                     isImporting && "opacity-50 cursor-wait"
                                 )}
                             >
                                 <span className={cn("w-1.5 h-1.5 rounded-full", isImporting ? "bg-yellow-500 animate-pulse" : "bg-green-500")}></span>
-                                {isImporting ? 'Importing...' : 'Import Data'}
+                                {isImporting ? '가져오는 중...' : '명렬표 가져오기'}
                             </button>
                         </div>
                     </div>
@@ -124,7 +123,7 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                             placeholder="이름 또는 번호로 검색..."
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full bg-white/[0.03] border border-white/5 rounded-2xl py-4 pl-12 pr-6 text-sm text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all font-bold placeholder:text-gray-600"
+                            className="w-full bg-white/[0.03] border border-white/5 rounded-xl py-2 pl-10 pr-4 text-xs text-white focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.05] transition-all font-bold placeholder:text-gray-600"
                         />
                     </div>
                 </div>
@@ -139,12 +138,14 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                         >
                             <Mail size={16} /> 미제출자 일괄 알림
                         </button>
-                        <button
-                            onClick={() => alert('명렬표 및 제출 현황을 엑셀 파일로 다운로드합니다.')}
-                            className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 border border-white/5 active:scale-[0.98] transition-all"
+                        <a
+                            href="https://docs.google.com/spreadsheets/d/1Fnvbd2_oDlZ_JZ874smNhDoXDqvZhOzApjAFleeZIdU/edit"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 py-3 bg-green-600/10 hover:bg-green-600/20 text-green-400 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 border border-green-500/20 active:scale-[0.98] transition-all"
                         >
-                            <Download size={16} /> 엑셀 내보내기
-                        </button>
+                            <ExternalLink size={16} /> 구글시트 열기
+                        </a>
                     </div>
 
                     <div className="flex p-1 bg-white/[0.03] border border-white/5 rounded-xl">
@@ -153,7 +154,7 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                                 key={f}
                                 onClick={() => setFilter(f)}
                                 className={cn(
-                                    "flex-1 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                                    "flex-1 py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition-all",
                                     filter === f ? "bg-white/10 text-white shadow-sm" : "text-gray-500 hover:text-gray-300"
                                 )}
                             >
@@ -165,7 +166,7 @@ export default function StudentListView({ students, loading }: StudentListViewPr
             </div>
 
             {/* List */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-1 gap-3">
                     <AnimatePresence mode="popLayout">
                         {filteredStudents.map((student) => (
@@ -176,15 +177,15 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                                 animate={{ opacity: 1, y: 0 }}
                                 exit={{ opacity: 0, scale: 0.95 }}
                                 className={cn(
-                                    "group p-5 rounded-3xl border transition-all flex items-center justify-between active:scale-[0.98]",
+                                    "group p-2.5 rounded-xl border transition-all flex items-center justify-between active:scale-[0.98]",
                                     student.submitted
                                         ? "bg-emerald-500/[0.03] border-emerald-500/10 hover:border-emerald-500/30"
                                         : "bg-white/[0.02] border-white/5 hover:border-white/10"
                                 )}
                             >
-                                <div className="flex items-center gap-6">
+                                <div className="flex items-center gap-3">
                                     <div className={cn(
-                                        "w-12 h-12 rounded-2xl flex items-center justify-center text-lg font-black shadow-inner border",
+                                        "w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black shadow-inner border",
                                         student.submitted
                                             ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
                                             : "bg-white/5 text-gray-500 border-white/10"
@@ -192,23 +193,23 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                                         {student.student_num}
                                     </div>
                                     <div>
-                                        <h4 className="text-base font-black text-white group-hover:text-indigo-400 transition-colors uppercase tracking-tight">
+                                        <h4 className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors uppercase tracking-tight">
                                             {student.name}
                                         </h4>
-                                        <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mt-1">
-                                            {student.submitted ? `제출됨 • ${new Date(student.submittedAt!).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}` : '미제출 상태'}
-                                        </p>
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                    <p className="text-[10px] font-bold text-gray-600 uppercase tracking-widest mr-2">
+                                        {student.submitted ? `제출됨` : '미제출'}
+                                    </p>
                                     {student.submitted ? (
-                                        <div className="p-2.5 bg-emerald-500/10 rounded-xl text-emerald-400">
-                                            <CheckCircle2 size={20} />
+                                        <div className="p-1.5 bg-emerald-500/10 rounded-lg text-emerald-400">
+                                            <CheckCircle2 size={14} />
                                         </div>
                                     ) : (
-                                        <button className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-gray-600 hover:text-indigo-400 transition-all">
-                                            <Mail size={20} />
+                                        <button className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-gray-600 hover:text-indigo-400 transition-all">
+                                            <Mail size={14} />
                                         </button>
                                     )}
                                     <ChevronRight size={16} className="text-gray-700 group-hover:text-white transition-all transform group-hover:translate-x-1" />
@@ -221,7 +222,7 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                 {filteredStudents.length === 0 && !loading && (
                     <div className="flex flex-col items-center justify-center py-32 text-center opacity-30">
                         <User size={48} className="mb-4" />
-                        <p className="font-black uppercase tracking-widest text-xs">No students found</p>
+                        <p className="font-bold text-gray-500">학생 데이터가 없습니다</p>
                     </div>
                 )}
             </div>

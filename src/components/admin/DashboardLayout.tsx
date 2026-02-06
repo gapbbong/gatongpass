@@ -175,7 +175,7 @@ export default function DashboardLayout({
 
         {/* Column 3: Stats Panel (Optional/Side) */}
         {showStats && stats && (
-          <section className="w-96 border-l border-white-[0.02] bg-secondary/20 backdrop-blur-sm hidden xl:flex flex-col shrink-0 overflow-y-auto z-20 custom-scrollbar shadow-[-20px_0_30px_-20px_rgba(0,0,0,0.5)]">
+          <section className="w-96 border-l border-white-[0.02] bg-secondary/20 backdrop-blur-sm hidden lg:flex flex-col shrink-0 overflow-y-auto z-20 custom-scrollbar shadow-[-20px_0_30px_-20px_rgba(0,0,0,0.5)]">
             {stats}
           </section>
         )}

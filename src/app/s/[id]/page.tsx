@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { useParams } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, Check, User, PenTool, Calendar, ShieldCheck, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -21,6 +22,8 @@ interface DocumentData {
     content?: string; // Optional text content
     deadline: string;
     formItems: FormItem[];
+    fileData?: string | null;
+    fileType?: string | null;
 }
 
 // Mock Data for Demo (If no local storage found)
@@ -32,10 +35,14 @@ const MOCK_DOC: DocumentData = {
         { id: '1', type: 'radio', label: '참가 여부', options: ['참가함', '불참함'], required: true },
         { id: '2', type: 'text', label: '학생 전화번호', required: true },
         { id: '3', type: 'signature', label: '보호자 서명', required: true }
-    ]
+    ],
+    fileData: null,
+    fileType: null
 };
 
-export default function SubmissionPage({ params }: { params: { id: string } }) {
+export default function SubmissionPage() {
+    const params = useParams();
+    const id = params?.id as string;
     const [doc, setDoc] = useState<DocumentData | null>(null);
     const [step, setStep] = useState<'intro' | 'student' | 'survey' | 'completed'>('intro');
 
@@ -50,11 +57,13 @@ export default function SubmissionPage({ params }: { params: { id: string } }) {
     const sigPadRef = useRef<SignatureCanvas>(null);
 
     useEffect(() => {
+        if (!id) return;
+
         // Load document from LocalStorage (Shared with Admin Demo)
         const savedDocs = localStorage.getItem('gatong_docs');
         if (savedDocs) {
             const docs = JSON.parse(savedDocs);
-            const found = docs.find((d: any) => d.id === params.id);
+            const found = docs.find((d: any) => d.id === id);
             if (found) {
                 setDoc(found);
                 return;
@@ -62,7 +71,7 @@ export default function SubmissionPage({ params }: { params: { id: string } }) {
         }
         // Fallback to mock if not found (for testing URL directly)
         setDoc(MOCK_DOC);
-    }, [params.id]);
+    }, [id]);
 
     const handleNext = () => {
         if (step === 'intro') setStep('student');
@@ -128,12 +137,21 @@ export default function SubmissionPage({ params }: { params: { id: string } }) {
                                     <h1 className="text-2xl font-black text-slate-900 leading-snug break-keep">
                                         {doc.title}
                                     </h1>
+
+                                    {/* PREVIEW IMAGE */}
+                                    {(doc as any).fileData && (doc as any).fileType?.startsWith('image/') && (
+                                        <div className="rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+                                            <img src={(doc as any).fileData} alt="가정통신문 미리보기" className="w-full h-auto" />
+                                        </div>
+                                    )}
                                     <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 text-left space-y-3">
                                         <div className="flex items-start gap-3">
                                             <Calendar className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                                             <div>
                                                 <div className="text-xs font-bold text-slate-500">제출 기한</div>
-                                                <div className="text-sm font-bold text-slate-800">{doc.deadline}</div>
+                                                <div className="text-sm font-bold text-slate-800">
+                                                    {new Date(doc.deadline).toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })} 오전 8:00
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex items-start gap-3">
@@ -313,7 +331,7 @@ export default function SubmissionPage({ params }: { params: { id: string } }) {
                             onClick={handleNext}
                             className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 active:scale-[0.98] text-white rounded-2xl font-bold text-lg shadow-xl shadow-indigo-200 transition-all flex items-center justify-center gap-2"
                         >
-                            {step === 'intro' ? '참여하기' : step === 'survey' ? '제출하기' : '다음으로'}
+                            {step === 'intro' ? '제출하기' : step === 'survey' ? '제출하기' : '다음으로'}
                             <ChevronRight className="w-5 h-5 opacity-80" strokeWidth={3} />
                         </button>
                     </div>
