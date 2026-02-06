@@ -46,7 +46,7 @@ function AdminDashboardContent() {
     const [loading, setLoading] = useState(true);
 
     // View Mode: 'analytics' (default) or 'create' (wizard)
-    const [viewMode, setViewMode] = useState<'analytics' | 'create'>('analytics');
+    const [viewMode, setViewMode] = useState<'analytics' | 'create'>('create');
     const [showStats, setShowStats] = useState(true);
 
     // Student Data
@@ -76,7 +76,7 @@ function AdminDashboardContent() {
             const data = await getDocuments();
             setDocuments(data || []);
             if (data && data.length > 0 && !selectedDocId) {
-                setSelectedDocId(data[0].id);
+                // setSelectedDocId(data[0].id); // Disable auto-select to prioritize Wizard
             }
         } catch (error) {
             console.error('Error fetching documents:', error);
@@ -87,6 +87,7 @@ function AdminDashboardContent() {
 
     useEffect(() => {
         fetchDocs();
+        setViewMode('create'); // Force create mode on mount
     }, []);
 
     const selectedDoc = documents.find(doc => doc.id === selectedDocId) || null;
@@ -140,55 +141,68 @@ function AdminDashboardContent() {
 
             {/* Document List Header */}
             <div className="px-6 py-2 flex items-center justify-between text-xs text-gray-500 font-bold uppercase tracking-wider">
-                <span>Recent Documents</span>
-                <span className="bg-white/5 px-2 py-0.5 rounded text-[10px]">{documents.length}</span>
+                <span>{viewMode === 'create' ? 'Documents Hidden' : 'Recent Documents'}</span>
+                <span className="bg-white/5 px-2 py-0.5 rounded text-[10px]">{viewMode === 'create' ? '-' : documents.length}</span>
             </div>
 
             {/* Document List (Scrollable) */}
             <div className="flex-1 overflow-y-auto custom-scrollbar px-3 space-y-2 pb-4">
-                {documents.map((doc) => (
-                    <button
-                        key={doc.id}
-                        onClick={() => {
-                            setSelectedDocId(doc.id);
-                            setViewMode('analytics');
-                        }}
-                        className={cn(
-                            "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97] border",
-                            selectedDocId === doc.id
-                                ? "bg-white/[0.08] border-indigo-500/50 shadow-xl"
-                                : "bg-transparent border-transparent hover:bg-white/[0.03]"
-                        )}
-                    >
-                        <div className="flex justify-between items-start mb-2">
-                            <span className={cn(
-                                "text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest border",
-                                doc.type === 'action'
-                                    ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                                    : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                {viewMode === 'create' ? (
+                    <div className="flex flex-col items-center justify-center h-full text-center p-4 opacity-30">
+                        <FileText size={48} className="mb-2" />
+                        <p className="text-xs">새 문서 작성 중에는<br />목록이 숨겨집니다.</p>
+                        <button
+                            onClick={() => setViewMode('analytics')}
+                            className="mt-4 px-3 py-1 bg-white/10 rounded text-xs hover:bg-white/20 transition-colors"
+                        >
+                            목록 보기
+                        </button>
+                    </div>
+                ) : (
+                    documents.map((doc) => (
+                        <button
+                            key={doc.id}
+                            onClick={() => {
+                                setSelectedDocId(doc.id);
+                                setViewMode('analytics');
+                            }}
+                            className={cn(
+                                "w-full text-left p-4 rounded-2xl transition-all group relative overflow-hidden active:scale-[0.97] border",
+                                selectedDocId === doc.id
+                                    ? "bg-white/[0.08] border-indigo-500/50 shadow-xl"
+                                    : "bg-transparent border-transparent hover:bg-white/[0.03]"
+                            )}
+                        >
+                            <div className="flex justify-between items-start mb-2">
+                                <span className={cn(
+                                    "text-[9px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-widest border",
+                                    doc.type === 'action'
+                                        ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
+                                        : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"
+                                )}>
+                                    {doc.type === 'action' ? '서명' : '안내'}
+                                </span>
+                                <span className="text-[10px] text-gray-500 font-mono">
+                                    {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
+                                </span>
+                            </div>
+                            <h4 className={cn(
+                                "text-sm font-bold leading-snug line-clamp-2 transition-colors mb-2",
+                                selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
                             )}>
-                                {doc.type === 'action' ? '서명' : '안내'}
-                            </span>
-                            <span className="text-[10px] text-gray-500 font-mono">
-                                {new Date(doc.created_at).toLocaleDateString('ko-KR', { month: '2-digit', day: '2-digit' })}
-                            </span>
-                        </div>
-                        <h4 className={cn(
-                            "text-sm font-bold leading-snug line-clamp-2 transition-colors mb-2",
-                            selectedDocId === doc.id ? "text-white" : "text-gray-400 group-hover:text-gray-200"
-                        )}>
-                            {doc.title}
-                        </h4>
+                                {doc.title}
+                            </h4>
 
-                        {/* Progress Bar in List */}
-                        <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
-                            <div
-                                className={cn("h-full rounded-full transition-all duration-500", doc.status === 'completed' ? "bg-emerald-500" : "bg-indigo-500")}
-                                style={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
-                            />
-                        </div>
-                    </button>
-                ))}
+                            {/* Progress Bar in List */}
+                            <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                                <div
+                                    className={cn("h-full rounded-full transition-all duration-500", doc.status === 'completed' ? "bg-emerald-500" : "bg-indigo-500")}
+                                    style={{ width: `${(doc.submitted_count / doc.total_count) * 100}%` }}
+                                />
+                            </div>
+                        </button>
+                    ))
+                )}
             </div>
 
             {/* Fixed Bottom: Settings */}

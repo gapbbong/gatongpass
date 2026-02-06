@@ -206,7 +206,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     };
 
     const handleCopyText = () => {
-        const url = `http://localhost:3000/s/${tempDoc?.id}`;
+        const url = `${window.location.origin}/s/${tempDoc?.id}`;
         const text = `[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${url}`;
         navigator.clipboard.writeText(text);
         alert("쿨알림톡용 텍스트가 복사되었습니다.");
@@ -484,7 +484,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                     <MessageCircle size={14} /> 쿨알림톡 전달용 메시지
                                 </h4>
                                 <div className="bg-black/30 rounded-xl p-4 text-xs text-gray-300 leading-relaxed font-mono whitespace-pre-wrap">
-                                    {`[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\nhttp://localhost:3000/s/${tempDoc.id}`}
+                                    {`[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${typeof window !== 'undefined' ? window.location.origin : ''}/s/${tempDoc.id}`}
                                 </div>
                                 <button onClick={handleCopyText} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
                                     <Copy size={14} /> 텍스트 복사
