@@ -75,9 +75,14 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         }
     }, [title]);
 
-    const { getRootProps, getInputProps } = useDropzone({
+    const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
-        accept: { 'application/pdf': ['.pdf'], 'image/*': ['.png', '.jpg', '.jpeg'] },
+        onDropRejected: () => alert('지원되지 않는 파일 형식입니다.\nPDF 또는 이미지(JPG, PNG) 파일만 업로드해주세요.'),
+        accept: {
+            'application/pdf': ['.pdf'],
+            'image/jpeg': ['.jpg', '.jpeg'],
+            'image/png': ['.png']
+        },
         multiple: false
     });
 
@@ -250,7 +255,8 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                             </div>
                             <div {...getRootProps()} className={cn(
                                 "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group",
-                                file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
+                                isDragActive ? "border-indigo-500 bg-indigo-500/20 scale-[1.02] shadow-2xl shadow-indigo-500/20" :
+                                    file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
                             )}>
                                 <input {...getInputProps()} />
                                 <div className="w-16 h-16 rounded-full bg-white/5 mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform">
