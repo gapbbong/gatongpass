@@ -13,6 +13,8 @@ export const metadata: Metadata = {
   description: "가정통신문 통합 관리 솔루션, 가통패스",
 };
 
+import { ThemeProvider } from "@/components/ThemeProvider";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -21,9 +23,11 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body
-        className={`${outfit.variable} font-sans antialiased mesh-gradient min-h-screen`}
+        className={`${outfit.variable} font-sans antialiased min-h-screen transition-colors duration-300`}
       >
-        {children}
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
         <script
           dangerouslySetInnerHTML={{
             __html: `

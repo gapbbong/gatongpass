@@ -7,12 +7,13 @@ import {
     Sparkles, Plus, Trash2, ChevronRight, Layout, Check, AlignLeft,
     Copy, Search, MousePointer2, Wand2, PenTool, Smartphone, QrCode, Download,
     Users, Calendar, Clock, Share2, MessageCircle, FileImage, ExternalLink,
-    Minus, Sheet, UserPlus, Table2, Send, ListChecks
+    Minus, Sheet, UserPlus, Table2, Send, ListChecks, ZoomIn
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import docStats from '@/lib/doc_stats.json';
 import Tesseract from 'tesseract.js';
+import { generateSheetId, createSheet } from '@/lib/gasClient';
 
 // --- Types ---
 type Step = 'input' | 'processing' | 'completed';
@@ -28,33 +29,50 @@ interface FormItem {
 interface CorrespondenceWizardProps {
     onSuccess: (newDoc: any) => void;
     onCancel: () => void;
+    onDraftUpdate?: (draft: any) => void;
+    initialData?: any;
 }
+
+// --- Constants ---
+const WARM_GREETINGS = [
+    "학생의 꿈과 미래를 항상 응원합니다. ✨",
+    "학교를 믿고 자녀를 맡겨주시는 학부모님께 깊은 감사를 드립니다. ❤️",
+    "오늘도 우리 아이들의 성장을 위해 애쓰시는 학부모님, 정말 존경하고 감사합니다. 👏",
+    "학교와 가정이 한마음으로 소통할 때, 우리 아이들은 더 크게 자라납니다. 🌱",
+    "자녀의 행복한 학교 생활을 위해 최선을 다하겠습니다. 함께해주셔서 감사합니다. 🙏",
+    "언제나 학교 교육에 적극적으로 참여해주시는 학부모님 덕분에 학교가 더욱 따뜻해집니다. 🏠",
+    "꿈을 향해 나아가는 학생들의 든든한 버팀목이 되어주셔서 감사합니다. 💪",
+    "우리 아이들이 더 좋은 환경에서 배울 수 있도록 늘 고민하고 노력하겠습니다. 🎓"
+];
 
 // --- Target Audience Definitions ---
 // --- Constants removed in favor of schoolConfig ---
 
-export default function CorrespondenceWizard({ onSuccess, onCancel }: CorrespondenceWizardProps) {
+export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdate, initialData }: CorrespondenceWizardProps) {
     // --- State ---
     const [step, setStep] = useState<Step>('input');
-    const [showPreview, setShowPreview] = useState(false);
+    // Removed activeTab state as per user request (handled by column layout now)
+    const [showFullPreview, setShowFullPreview] = useState(false); // Kept for modal preview if needed, but tabs removed
 
     // 1. File & Basic Info
     const [file, setFile] = useState<File | null>(null);
-    const [title, setTitle] = useState('');
+    const [title, setTitle] = useState(initialData?.title || '');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showTitleHint, setShowTitleHint] = useState(false);
     const [titleCandidates, setTitleCandidates] = useState<string[]>([]); // 추천 후보
-    const [docType, setDocType] = useState<'notice' | 'action' | null>(null); // 단순안내 vs 회신
+    const [docType, setDocType] = useState<'notice' | 'action'>(initialData?.type === 'notice' ? 'notice' : 'action');
 
     // 2. Form Builder
-    const [formItems, setFormItems] = useState<FormItem[]>([]);
+    const [formItems, setFormItems] = useState<FormItem[]>(initialData?.formItems || [
+        { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
+        { id: '2', type: 'signature', label: '보호자 서명', required: true }
+    ]);
 
     // 3. Settings (Target & Deadline)
-    // 3. Settings (Target & Deadline)
-    const [targetCategory, setTargetCategory] = useState<'group' | 'student'>('group');
-    const [selectedGrades, setSelectedGrades] = useState<number[]>([1, 2, 3]);
-    const [selectedClasses, setSelectedClasses] = useState<number[]>([1, 2, 3, 4, 5, 6]);
-    const [targetStudents, setTargetStudents] = useState<string>(''); // Comma separated
+    const [targetCategory, setTargetCategory] = useState<'group' | 'student'>(initialData?.targetCategory || 'group');
+    const [selectedGrades, setSelectedGrades] = useState<number[]>(initialData?.selectedGrades || [1, 2, 3]);
+    const [selectedClasses, setSelectedClasses] = useState<number[]>(initialData?.selectedClasses || [1, 2, 3, 4, 5, 6]);
+    const [targetStudents, setTargetStudents] = useState<string>(initialData?.targetStudents || ''); // Comma separated
 
     // School Config & Real Logic
     const [schoolConfig, setSchoolConfig] = useState<any>(null);
@@ -78,6 +96,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     }, []);
 
     const [deadline, setDeadline] = useState<Date>(() => {
+        if (initialData?.deadline) return new Date(initialData.deadline);
         const d = new Date();
         d.setDate(d.getDate() + 3); // Default +3 days
         d.setHours(8, 0, 0, 0); // Default 08:00 AM
@@ -88,6 +107,130 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     const [isSheetCreating, setIsSheetCreating] = useState(false);
     const [tempDoc, setTempDoc] = useState<any>(null);
 
+    // 5. Student List Verification
+    const [showStudentListModal, setShowStudentListModal] = useState(false);
+
+    // 6. Preview & Emotional Branding
+    const [previewUrl, setPreviewUrl] = useState<string | null>(initialData?.path || null);
+    const [randomGreeting] = useState(() => WARM_GREETINGS[Math.floor(Math.random() * WARM_GREETINGS.length)]);
+
+    // --- Session Storage Persistence ---
+    useEffect(() => {
+        if (initialData) return; // Skip draft loading if we have initialData
+
+        const loadDraft = () => {
+            try {
+                const saved = sessionStorage.getItem('gatong_wizard_draft');
+                if (!saved) return;
+
+                const draft = JSON.parse(saved);
+
+                // Restore Basic Info
+                if (draft.title) setTitle(draft.title);
+                if (draft.docType) setDocType(draft.docType);
+                if (draft.step) setStep(draft.step);
+
+                // Restore Form Items
+                if (draft.formItems) setFormItems(draft.formItems);
+
+                // Restore Target Info
+                if (draft.targetCategory) setTargetCategory(draft.targetCategory);
+                if (draft.selectedGrades) setSelectedGrades(draft.selectedGrades);
+                if (draft.selectedClasses) setSelectedClasses(draft.selectedClasses);
+                if (draft.targetStudents) setTargetStudents(draft.targetStudents);
+
+                // Restore Deadline
+                if (draft.deadline) setDeadline(new Date(draft.deadline));
+
+                // Restore File (if exists and valid)
+                if (draft.fileData && draft.fileName && draft.fileType) {
+                    // Convert Base64 back to File
+                    const byteString = atob(draft.fileData.split(',')[1]);
+                    const ab = new ArrayBuffer(byteString.length);
+                    const ia = new Uint8Array(ab);
+                    for (let i = 0; i < byteString.length; i++) {
+                        ia[i] = byteString.charCodeAt(i);
+                    }
+                    const blob = new Blob([ab], { type: draft.fileType });
+                    const restoredFile = new File([blob], draft.fileName, { type: draft.fileType });
+
+                    setFile(restoredFile);
+                    const url = URL.createObjectURL(restoredFile);
+                    setPreviewUrl(url);
+                }
+            } catch (e) {
+                console.error("Failed to load draft:", e);
+                sessionStorage.removeItem('gatong_wizard_draft');
+            }
+        };
+
+        loadDraft();
+    }, []);
+
+    // Save Draft on Change
+    useEffect(() => {
+        const saveDraft = async () => {
+            const draft: any = {
+                step,
+                title,
+                docType,
+                formItems,
+                targetCategory,
+                selectedGrades,
+                selectedClasses,
+                targetStudents,
+                deadline: deadline.toISOString(),
+                previewUrl, // Include previewUrl for dashboard
+            };
+
+            // Notify parent
+            if (onDraftUpdate) {
+                onDraftUpdate(draft);
+            }
+
+            // If file exists, try to save it (with size check/limit handling implicitly by try-catch)
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        draft.fileData = e.target?.result;
+                        draft.fileName = file.name;
+                        draft.fileType = file.type;
+                        sessionStorage.setItem('gatong_wizard_draft', JSON.stringify(draft));
+                    } catch (err) {
+                        console.warn("File too large for session storage, saving text only.");
+                        // Retry without file
+                        const { fileData, fileName, fileType, ...textDraft } = draft;
+                        sessionStorage.setItem('gatong_wizard_draft', JSON.stringify(textDraft));
+                    }
+                };
+                reader.readAsDataURL(file);
+            } else {
+                sessionStorage.setItem('gatong_wizard_draft', JSON.stringify(draft));
+            }
+        };
+
+        const timeoutId = setTimeout(saveDraft, 500); // Debounce
+        return () => clearTimeout(timeoutId);
+    }, [step, title, docType, formItems, targetCategory, selectedGrades, selectedClasses, targetStudents, deadline, file, previewUrl, onDraftUpdate]);
+
+
+    const getMatchedStudents = () => {
+        const ids = Array.from(new Set(targetStudents.split(/[\n, ]+/).filter(id => id.trim())));
+        return ids.map(id => {
+            const inputId = id.trim();
+            const student = allStudents.find(s =>
+                s.id === inputId ||
+                s.student_num?.toString() === inputId
+            );
+            return {
+                id: inputId,
+                name: student ? student.name : '미등록 학생',
+                isFound: !!student
+            };
+        });
+    };
+
     // --- Handlers ---
 
     // ... OCR (omitted for brevity, keep existing) ...
@@ -96,7 +239,9 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         if (!schoolConfig) return 0;
 
         // 1. Individual
-        if (targetCategory === 'student') return targetStudents.split(',').filter(s => s.trim()).length;
+        if (targetCategory === 'student') {
+            return Array.from(new Set(targetStudents.split(/[\n, ]+/).filter(id => id.trim()))).length;
+        }
 
         // 2. Group Selection
         // Filter by selected grades AND selected classes
@@ -154,20 +299,9 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
             }
 
             setTitleCandidates(rawList.slice(0, 10));
-            scoredCandidates.sort((a, b) => b.score - a.score);
-            const bestPick = scoredCandidates.length > 0 ? scoredCandidates[0].text : "";
-
-            if (bestPick) setTitle(bestPick);
-            else if (rawList.length > 0) setTitle(rawList[0]);
-            else {
-                const fallbackName = file.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : file.name.replace(/\.[^/.]+$/, "");
-                setTitle(fallbackName);
-            }
             setShowTitleHint(true);
         } catch (err) {
             console.error("OCR Error", err);
-            const fallbackName = file.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : file.name.replace(/\.[^/.]+$/, "");
-            setTitle(fallbackName);
         } finally {
             setIsAnalyzing(false);
         }
@@ -178,9 +312,20 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         if (acceptedFiles.length > 0) {
             const f = acceptedFiles[0];
             setFile(f);
-            analyzeImage(f);
+
+            // Generate preview URL
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            const url = URL.createObjectURL(f);
+            setPreviewUrl(url);
+
+            // Set title to filename automatically for all files
+            const filenameTitle = f.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : f.name.replace(/\.[^/.]+$/, "");
+            setTitle(filenameTitle);
+
+            // AI Title Recommendation (OCR) is skipped for file uploads per user request.
+            // It only runs for pasted 'captures' where the filename is generic.
         }
-    }, [title]);
+    }, [previewUrl]); // Added previewUrl to dependencies for cleanup
 
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
@@ -189,7 +334,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         multiple: false
     });
 
-    const titleInputRef = useRef<HTMLInputElement>(null);
+    const titleInputRef = useRef<HTMLTextAreaElement>(null);
     useEffect(() => {
         const handlePaste = (e: ClipboardEvent) => {
             if (step !== 'input') return;
@@ -201,8 +346,17 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                     const blob = item.getAsFile();
                     if (blob) {
                         setFile(blob);
+
+                        // Generate preview URL
+                        if (previewUrl) URL.revokeObjectURL(previewUrl);
+                        const url = URL.createObjectURL(blob);
+                        setPreviewUrl(url);
+
+                        // Set title from filename
+                        const filenameTitle = blob.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : blob.name.replace(/\.[^/.]+$/, "");
+                        setTitle(filenameTitle);
+
                         if (blob.type.startsWith('image/')) analyzeImage(blob);
-                        else setTitle(blob.name.replace(/\.[^/.]+$/, ""));
                     }
                     break;
                 }
@@ -210,19 +364,24 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
         };
         window.addEventListener('paste', handlePaste);
         return () => window.removeEventListener('paste', handlePaste);
-    }, [step, title]);
+    }, [step, title, previewUrl]);
+
+    // Auto-resize title textarea for vertical centering
+    useEffect(() => {
+        if (titleInputRef.current) {
+            titleInputRef.current.style.height = 'auto';
+            titleInputRef.current.style.height = `${titleInputRef.current.scrollHeight}px`;
+        }
+    }, [title, step]);
+
+    // Cleanup preview URL on unmount
+    useEffect(() => {
+        return () => {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+        };
+    }, [previewUrl]);
 
     // ... Type Selection ...
-    const selectType = (type: 'notice' | 'action') => {
-        setDocType(type);
-        if (type === 'notice') setFormItems([]);
-        else if (formItems.length === 0) {
-            setFormItems([
-                { id: '1', type: 'radio', label: '참가 여부', options: ['참가', '불참'], required: true },
-                { id: '2', type: 'signature', label: '보호자 서명', required: true }
-            ]);
-        }
-    };
 
     // ... Form Builder Helpers ...
     const addFormItem = (type: FormItem['type']) => {
@@ -331,15 +490,27 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
             formItems: formItems,
             sheetUrl: "https://docs.google.com/spreadsheets/d/mock-sheet-id",
             targetSummary: getTargetSummary(),
+            path: fileData as string, // Use Base64 as path for immediate preview
             fileData: fileData,
-            fileType: file?.type
+            fileType: file?.type,
+            sheetId: generateSheetId('school_2025', new Date().getFullYear(), Date.now().toString())
         };
+
+        // Create Sheet in GAS (Async, don't block)
+        createSheet(newDoc.sheetId, newDoc.formItems.map(i => i.label)).catch(console.error);
+
         const savedDocs = JSON.parse(localStorage.getItem('gatong_docs') || '[]');
         savedDocs.push(newDoc);
         localStorage.setItem('gatong_docs', JSON.stringify(savedDocs));
         setTempDoc(newDoc);
         setIsSheetCreating(false);
         setStep('completed');
+
+        // Clear Draft
+        sessionStorage.removeItem('gatong_wizard_draft');
+
+        // Auto-register to dashboard
+        onSuccess(newDoc);
     };
 
     const getTargetSummary = () => {
@@ -373,24 +544,8 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
     };
 
     return (
-        <div className="h-full flex flex-col bg-slate-900/50 backdrop-blur-md overflow-hidden relative">
-            {/* Header */}
-            <div className="p-5 border-b border-white/5 flex items-center justify-between shrink-0 bg-white/[0.02]">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
-                        <Wand2 size={20} />
-                    </div>
-                    <div>
-                        <h2 className="text-lg font-black text-white tracking-tight">AI 가정통신문 마법사</h2>
-                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
-                            {step === 'input' ? '간편 생성 모드' : step === 'processing' ? '생성 중...' : '완료'}
-                        </p>
-                    </div>
-                </div>
-                <button onClick={() => step === 'completed' && tempDoc ? onSuccess(tempDoc) : onCancel()} className="p-2 hover:bg-white/5 rounded-full text-gray-500 transition-colors">
-                    <X size={20} />
-                </button>
-            </div>
+        <div className="h-full flex flex-col bg-[var(--color-background)]/50 backdrop-blur-md overflow-hidden relative text-[var(--color-foreground)]">
+
 
             {/* Content Area */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6 relative">
@@ -398,25 +553,25 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
                     {/* PROCESSING VIEW */}
                     {step === 'processing' && (
-                        <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full py-10">
+                        <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center justify-center h-full py-20">
                             <div className="w-20 h-20 relative">
                                 <div className="absolute inset-0 border-4 border-indigo-500/30 rounded-full"></div>
                                 <div className="absolute inset-0 border-4 border-indigo-500 rounded-full border-t-transparent animate-spin"></div>
                                 <Sheet className="absolute inset-0 m-auto text-emerald-500" size={32} />
                             </div>
-                            <h3 className="text-xl font-black text-white mt-8 mb-2">구글 시트 생성 중...</h3>
-                            <p className="text-sm text-gray-400 text-center">
-                                '{title}_취합용'<br />스프레드시트를 만들고 있어요.
+                            <h3 className="text-xl font-black text-[var(--color-foreground)] mt-8 mb-2">통신문 생성 중...</h3>
+                            <p className="text-[var(--color-muted-foreground)] text-center font-medium">
+                                잠시만 기다려 주세요.
                             </p>
                         </motion.div>
                     )}
 
                     {/* COMPLETED VIEW */}
                     {step === 'completed' && tempDoc && (
-                        <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6 relative">
+                        <motion.div key="completed" initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="space-y-6 relative max-w-2xl mx-auto">
                             <button
                                 onClick={() => setStep('input')}
-                                className="absolute left-0 top-0 p-2 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-colors"
+                                className="absolute left-0 top-0 p-2 hover:bg-[var(--color-background)]/[0.05] rounded-full text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors"
                             >
                                 <ChevronRight className="rotate-180" size={20} />
                             </button>
@@ -424,45 +579,34 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
                                 <div className="w-16 h-16 bg-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-[0_0_30px_rgba(16,185,129,0.4)] mb-4 animate-bounce">
                                     <Check size={32} className="text-white" />
                                 </div>
-                                <h3 className="text-2xl font-black text-white">발송 준비 완료!</h3>
+                                <h3 className="text-2xl font-black text-[var(--color-foreground)]">{[
+                                    "💌 학부모님께 전달 준비가 완료되었습니다!",
+                                    "✨ 따뜻한 소통이 곧 시작됩니다!",
+                                    "🎉 가정과의 연결이 준비되었습니다!",
+                                    "💝 소중한 마음을 전할 준비가 끝났습니다!"
+                                ][Math.floor(Math.random() * 4)]}</h3>
+                                <p className="text-sm text-[var(--color-muted-foreground)] mt-2">학부모님께 따뜻한 안내를 전달해보세요</p>
                             </div>
 
                             {/* Link Box */}
-                            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                            <div className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-5 space-y-4 text-left">
                                 <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-2">
                                     <MessageCircle size={14} /> 쿨알림톡 전달용 메시지
                                 </h4>
-                                <div className="bg-black/30 rounded-xl p-4 text-xs text-gray-300 leading-relaxed font-mono whitespace-pre-wrap">
-                                    {`[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${typeof window !== 'undefined' ? window.location.origin : ''}/s/${tempDoc.id}`}
+                                <div className="bg-[var(--color-background)]/[0.05] rounded-xl p-4 text-xs text-[var(--color-muted-foreground)] leading-relaxed font-mono whitespace-pre-wrap border border-[var(--color-border)]">
+                                    {`[가정통신문] ${title}\n\n안녕하세요, 학부모님 💙\n자녀의 성장을 함께 응원하는 학교에서 안내드립니다.\n\n📅 편하게 응답해 주시면 감사하겠습니다: ${formattedDeadline}까지\n📱 아래 링크에서 내용 확인 후 서명 부탁드립니다:\n${typeof window !== 'undefined' ? window.location.origin : ''}/s/${tempDoc.id}\n\n늘 감사드립니다 🙏`}
                                 </div>
-                                <button onClick={handleCopyText} className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
-                                    <Copy size={14} /> 텍스트 복사
-                                </button>
-                                <button onClick={() => setShowPreview(true)} className="w-full py-3 bg-white/10 hover:bg-white/20 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
-                                    <Smartphone size={14} /> 학부모 화면 미리보기
-                                </button>
-                                <button onClick={() => onSuccess(tempDoc)} className="w-full py-4 mt-2 col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2">
-                                    <Check size={16} /> 확인 (대시보드로 이동)
-                                </button>
+                                <div className="grid grid-cols-2 gap-3">
+                                    <button onClick={handleCopyText} className="py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                        <Copy size={14} /> 텍스트 복사
+                                    </button>
+                                    <button onClick={() => setShowFullPreview(true)} className="py-3 bg-[var(--color-background)]/[0.05] hover:bg-[var(--color-background)]/[0.1] text-[var(--color-foreground)] rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all border border-[var(--color-border)]">
+                                        <Smartphone size={14} /> 미리보기
+                                    </button>
+                                </div>
                             </div>
 
-                            {/* Sheet Link */}
-                            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className="p-2 bg-emerald-500/20 rounded-lg text-emerald-400">
-                                        <Table2 size={20} />
-                                    </div>
-                                    <div>
-                                        <div className="text-xs font-bold text-white">자동 취합 설정됨</div>
-                                        <div className="text-[10px] text-emerald-400/80">구글 시트에 실시간으로 기록됩니다.</div>
-                                    </div>
-                                </div>
-                                <button className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 rounded-lg text-[10px] font-bold text-emerald-400 transition-colors flex items-center gap-1">
-                                    시트 열기 <ExternalLink size={10} />
-                                </button>
-                            </div>
-
-                            <button onClick={handleFinalize} className="w-full py-4 bg-white text-black hover:bg-gray-200 rounded-2xl font-black transition-colors">
+                            <button onClick={handleFinalize} className="w-full py-4 bg-[var(--color-foreground)] text-[var(--color-background)] hover:opacity-90 rounded-2xl font-black transition-all">
                                 닫기
                             </button>
                         </motion.div>
@@ -470,414 +614,519 @@ export default function CorrespondenceWizard({ onSuccess, onCancel }: Correspond
 
                     {/* INPUT FORM (WATERFALL) */}
                     {(step !== 'processing' && step !== 'completed') && (
-                        <motion.div
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            className="space-y-12 pb-10"
-                        >
-                            {/* SECTION 1: UPLOAD & TITLE */}
-                            <section className="space-y-6">
-                                <div {...getRootProps()} className={cn(
-                                    "border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all group",
-                                    isDragActive ? "border-indigo-500 bg-indigo-500/20 scale-[1.02] shadow-2xl shadow-indigo-500/20" :
-                                        file ? "border-emerald-500/50 bg-emerald-500/5" : "border-white/10 hover:border-indigo-500/50 hover:bg-white/[0.02]"
-                                )}>
-                                    <input {...getInputProps()} />
-                                    <div className="w-16 h-16 rounded-full bg-white/5 mx-auto mb-4 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                        {file ? <CheckCircle2 size={32} className="text-emerald-400" /> : <Upload size={32} className="text-gray-400 group-hover:text-indigo-400" />}
-                                    </div>
-                                    {file ? (
-                                        <>
-                                            <p className="text-white font-bold text-lg">{file.name}</p>
-                                            <p className="text-emerald-400 text-sm mt-1">업로드 완료!</p>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <p className="text-white font-bold text-lg mb-1">파일을 드래그하거나 클릭하여 업로드</p>
-                                            <p className="text-gray-500 text-sm mb-2">JPG, PNG, PDF 지원</p>
-                                            <div className="text-indigo-300 text-xs font-bold bg-indigo-500/10 px-3 py-1.5 rounded-full inline-block">
-                                                💡 이미지를 복사했다면 클릭 없이 바로 <strong>Ctrl+V</strong>
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
+                        <div className="h-full">
 
-                                <div className="space-y-2">
-                                    <label className="text-xs font-bold text-gray-400">제목</label>
-                                    <div className="relative">
-                                        <input
-                                            ref={titleInputRef}
-                                            value={title}
-                                            onChange={e => setTitle(e.target.value)}
-                                            placeholder={isAnalyzing ? "제목을 분석하고 있습니다..." : "가정통신문 제목을 입력하세요"}
-                                            className={cn(
-                                                "w-full bg-white/5 border border-white/10 rounded-xl p-4 text-white focus:border-indigo-500/50 outline-none transition-colors font-bold",
-                                                isAnalyzing && "animate-pulse text-gray-400"
-                                            )}
-                                            readOnly={isAnalyzing}
-                                        />
-                                        {isAnalyzing && (
-                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 text-xs text-indigo-400 font-bold">
-                                                <Loader2 className="animate-spin" size={14} /> AI 분석 중
-                                            </div>
+                            <motion.div
+                                key="edit-form"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                className="space-y-12 pb-20 max-w-[95%] mx-auto"
+                            >
+                                {/* SECTION 1: UPLOAD & TITLE */}
+                                <section className="space-y-8">
+                                    <div {...getRootProps()} className={cn(
+                                        "border-2 border-dashed rounded-[2rem] p-4 text-center cursor-pointer transition-all duration-500 group relative overflow-hidden w-full mx-auto",
+                                        isDragActive ? "border-indigo-500 bg-indigo-500/10 shadow-xl shadow-indigo-500/20" :
+                                            file ? "border-emerald-500/50 bg-emerald-500/5" : "border-[var(--color-border)] hover:border-indigo-500/50 hover:bg-[var(--color-background)]/[0.02]"
+                                    )}>
+                                        <input {...getInputProps()} />
+                                        <div className="w-12 h-12 rounded-2xl bg-[var(--color-background)]/[0.05] mx-auto mb-3 flex items-center justify-center group-hover:scale-110 transition-transform duration-500">
+                                            {file ? <CheckCircle2 size={24} className="text-emerald-400" /> : <Upload size={24} className="text-[var(--color-muted-foreground)] group-hover:text-indigo-400" />}
+                                        </div>
+                                        {file ? (
+                                            <>
+                                                <p className="text-[var(--color-foreground)] font-black text-lg tracking-tight">{file.name}</p>
+                                                <p className="text-emerald-400 text-[10px] font-bold uppercase tracking-widest mt-1">업로드 완료!</p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-[var(--color-foreground)] font-bold text-lg mb-0.5 tracking-tight">문서 파일을 업로드하세요</p>
+                                                <p className="text-[var(--color-muted-foreground)] text-xs mb-3">PDF, JPG, PNG 형식을 지원합니다</p>
+                                                <div className="text-indigo-300 text-[10px] font-bold bg-indigo-500/10 px-3 py-1.5 rounded-full inline-flex items-center gap-2 border border-indigo-500/20">
+                                                    <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
+                                                    캡처했다면 이곳 클릭하지 말고 <strong>Ctrl + V</strong>
+                                                </div>
+                                            </>
                                         )}
-                                        <AnimatePresence>
-                                            {showTitleHint && (
-                                                <motion.div
-                                                    initial={{ opacity: 0, y: -10 }}
-                                                    animate={{ opacity: 1, y: 0 }}
-                                                    exit={{ opacity: 0, y: -10 }}
-                                                    className="mt-3 relative w-full bg-slate-900/90 backdrop-blur border border-indigo-500/30 text-indigo-100 p-0 rounded-xl shadow-2xl z-20 overflow-hidden"
-                                                >
-                                                    <div className="flex items-center justify-between p-3 bg-indigo-500/10 border-b border-indigo-500/20">
-                                                        <span className="flex items-center gap-2 font-bold text-indigo-300 text-xs uppercase tracking-wider">
-                                                            <Sparkles size={14} className="text-yellow-400" /> AI 추천 제목
-                                                        </span>
-                                                        <button onClick={() => setShowTitleHint(false)} className="text-indigo-400 hover:text-white transition-colors"><X size={14} /></button>
-                                                    </div>
-
-                                                    <div className="p-2 flex flex-col gap-1 max-h-[250px] overflow-y-auto custom-scrollbar">
-                                                        {titleCandidates.length > 0 ? titleCandidates.map((cand, idx) => (
-                                                            <button
-                                                                key={idx}
-                                                                onClick={() => {
-                                                                    setTitle(cand);
-                                                                    setShowTitleHint(false);
-                                                                }}
-                                                                className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-white/10 text-slate-200 transition-all text-sm flex items-start group"
-                                                            >
-                                                                <span className="text-indigo-500 font-mono mr-3 mt-0.5 text-xs group-hover:text-indigo-300">{String(idx + 1).padStart(2, '0')}</span>
-                                                                <span className="leading-snug break-keep">{cand}</span>
-                                                            </button>
-                                                        )) : (
-                                                            <div className="text-gray-500 text-xs p-4 text-center">
-                                                                추천할 제목을 찾지 못했습니다.<br />직접 제목을 입력해주세요.
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </motion.div>
-                                            )}
-                                        </AnimatePresence>
                                     </div>
-                                </div>
-                            </section>
 
-                            {/* SECTION 2: DOC TYPE */}
-                            {file && title.trim().length > 0 && (
-                                <motion.section
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="space-y-4 pt-4 border-t border-white/5"
-                                >
-                                    <h3 className="text-white font-bold text-lg mb-4 text-center">어떤 종류의 가정통신문인가요?</h3>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <button
-                                            onClick={() => selectType('notice')}
-                                            className={cn(
-                                                "p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-3",
-                                                docType === 'notice'
-                                                    ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20"
-                                                    : "bg-white/5 border-white/10 hover:bg-white/10 text-gray-400"
-                                            )}
-                                        >
-                                            <div className="p-3 bg-white/10 rounded-full">
-                                                <FileText size={24} className={docType === 'notice' ? "text-white" : "text-gray-400"} />
-                                            </div>
-                                            <div className="font-bold text-white">단순 안내</div>
-                                            <div className="text-xs text-white/60">서명 불필요</div>
-                                        </button>
-                                        <button
-                                            onClick={() => selectType('action')}
-                                            className={cn(
-                                                "p-6 rounded-2xl border-2 transition-all flex flex-col items-center gap-3",
-                                                docType === 'action'
-                                                    ? "bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-500/20"
-                                                    : "bg-white/5 border-white/10 hover:bg-white/10 text-gray-400"
-                                            )}
-                                        >
-                                            <div className="p-3 bg-white/10 rounded-full">
-                                                <PenTool size={24} className={docType === 'action' ? "text-white" : "text-gray-400"} />
-                                            </div>
-                                            <div className="font-bold text-white">회신 필요</div>
-                                            <div className="text-xs text-white/60">동의/신청/조사</div>
-                                        </button>
-                                    </div>
-                                </motion.section>
-                            )}
-
-                            {/* SECTION 3: FORM BUILDER (For Action Letter) */}
-                            {docType === 'action' && (
-                                <motion.section
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="space-y-4 pt-4 border-t border-white/5"
-                                >
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-white font-bold text-lg">질문 항목 설정</h3>
-                                        <div className="flex gap-2">
-                                            <button onClick={() => addFormItem('radio')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 객관식</button>
-                                            <button onClick={() => addFormItem('text')} className="px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg text-xs text-white transition-colors">+ 주관식</button>
+                                    <div className="space-y-6">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+                                            <h3 className="text-xl font-black text-[var(--color-foreground)] tracking-tight">가정통신문 제목</h3>
                                         </div>
-                                    </div>
-                                    <div className="space-y-3">
-                                        {formItems.map((item, idx) => (
-                                            <motion.div key={item.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="p-2 bg-white/5 rounded-lg text-indigo-400">
-                                                        {item.type === 'text' ? <AlignLeft size={16} /> : <ListChecks size={16} />}
-                                                    </div>
-                                                    <input
-                                                        value={item.label}
-                                                        onChange={(e) => updateFormItem(item.id, { label: e.target.value })}
-                                                        placeholder="질문 내용을 입력하세요"
-                                                        className="flex-1 bg-transparent border-none outline-none text-white font-bold placeholder:text-gray-600"
-                                                    />
-                                                    {item.type !== 'signature' && (
-                                                        <button onClick={() => removeFormItem(item.id)} className="p-2 hover:bg-red-500/20 rounded-lg text-gray-500 hover:text-red-400 transition-colors">
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                                {item.options && (
-                                                    <div className="ml-12 space-y-2">
-                                                        {item.options.map((opt, optIdx) => (
-                                                            <div key={optIdx} className="flex items-center gap-2">
-                                                                <div className="w-1.5 h-1.5 rounded-full bg-gray-600" />
-                                                                <input
-                                                                    value={opt}
-                                                                    onChange={(e) => {
-                                                                        const newOptions = [...(item.options || [])];
-                                                                        newOptions[optIdx] = e.target.value;
-                                                                        updateFormItem(item.id, { options: newOptions });
-                                                                    }}
-                                                                    className="flex-1 bg-transparent text-sm text-gray-300 outline-none border-b border-transparent focus:border-indigo-500/50 transition-colors placeholder:text-gray-700"
-                                                                    placeholder={`옵션 ${optIdx + 1}`}
-                                                                />
-                                                            </div>
-                                                        ))}
-                                                        <button
-                                                            onClick={() => {
-                                                                const newOptions = [...(item.options || []), ''];
-                                                                updateFormItem(item.id, { options: newOptions });
-                                                            }}
-                                                            className="text-xs text-indigo-400 hover:text-indigo-300 font-bold mt-1"
-                                                        >
-                                                            + 옵션 추가
-                                                        </button>
-                                                    </div>
+                                        <div className={cn(
+                                            "relative group bg-[var(--color-background)]/[0.05] border border-[var(--color-border)] rounded-2xl transition-all h-[75px] flex items-center focus-within:border-indigo-600 shadow-sm",
+                                            isAnalyzing && "animate-pulse"
+                                        )}>
+                                            <textarea
+                                                ref={titleInputRef}
+                                                value={title}
+                                                onChange={e => setTitle(e.target.value)}
+                                                placeholder={isAnalyzing ? "AI가 제목을 분석하고 있습니다..." : "예: 2024학년도 체험학습 신청 안내"}
+                                                className={cn(
+                                                    "w-full bg-transparent border-none px-6 py-0 text-[var(--color-foreground)] outline-none transition-all font-bold placeholder:text-[var(--color-muted-foreground)] resize-none h-auto block leading-tight",
+                                                    isAnalyzing && "text-[var(--color-muted-foreground)]"
                                                 )}
-                                            </motion.div>
-                                        ))}
-                                    </div>
-                                    <div className="flex items-center gap-2 p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl text-xs text-indigo-300">
-                                        <AlertCircle size={14} />
-                                        <span>모든 회신형 문서에는 '서명'란이 자동 포함됩니다.</span>
-                                    </div>
-                                </motion.section>
-                            )}
-
-                            {/* SECTION 4: TARGET & DEADLINE & SUBMIT */}
-                            {docType && (
-                                <motion.section
-                                    initial={{ opacity: 0, y: 20 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    className="space-y-8 pt-4 border-t border-white/5"
-                                >
-                                    {/* Target */}
-                                    <div className="space-y-4">
-                                        <h3 className="text-white font-bold text-lg flex items-center gap-2">
-                                            <Users size={20} className="text-indigo-400" /> 발송 대상
-                                            <span className="text-sm font-normal text-indigo-300 ml-2">
-                                                (전체 - {calculateTotalTarget()}명)
-                                            </span>
-                                        </h3>
-                                        <div className="space-y-6">
-                                            <div className="flex p-1 bg-black/20 rounded-xl">
-                                                <button
-                                                    onClick={() => setTargetCategory('group')}
-                                                    className={cn(
-                                                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
-                                                        targetCategory === 'group' ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
-                                                    )}
-                                                >
-                                                    그룹 선택
-                                                </button>
-                                                <button
-                                                    onClick={() => setTargetCategory('student')}
-                                                    className={cn(
-                                                        "flex-1 py-2 text-xs font-bold rounded-lg transition-all",
-                                                        targetCategory === 'student' ? "bg-indigo-600 text-white shadow-lg" : "text-gray-500 hover:text-gray-300"
-                                                    )}
-                                                >
-                                                    개별 입력
-                                                </button>
-                                            </div>
-
-                                            {targetCategory === 'group' && schoolConfig && (
-                                                <div className="space-y-6">
-                                                    {/* Quick Actions */}
-                                                    <div className="flex gap-2">
-                                                        <button
-                                                            onClick={selectAllStudents}
-                                                            className={cn(
-                                                                "flex-1 py-2 rounded-xl text-xs font-bold border transition-all",
-                                                                (selectedGrades.length === schoolConfig.grades.length && selectedClasses.length === 6)
-                                                                    ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20"
-                                                                    : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10"
-                                                            )}
-                                                        >
-                                                            전교생
-                                                        </button>
-                                                        {schoolConfig.departments.map((dept: any) => (
-                                                            <button
-                                                                key={dept.id}
-                                                                onClick={() => selectDept(dept)}
-                                                                className="flex-1 py-2 bg-white/5 border border-white/10 rounded-xl text-[10px] font-bold text-gray-400 hover:bg-indigo-500/10 hover:border-indigo-500/30 hover:text-indigo-300 transition-all"
-                                                            >
-                                                                {dept.name}
+                                                readOnly={isAnalyzing}
+                                                rows={1}
+                                            />
+                                            <AnimatePresence>
+                                                {showTitleHint && (
+                                                    <motion.div
+                                                        initial={{ opacity: 0, y: 10 }}
+                                                        animate={{ opacity: 1, y: 0 }}
+                                                        exit={{ opacity: 0, y: 10 }}
+                                                        className="absolute left-0 right-0 top-full mt-4 bg-[var(--color-card)] border border-indigo-500/30 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.1)] z-50 overflow-hidden"
+                                                    >
+                                                        <div className="px-5 py-4 bg-indigo-500/10 border-b border-indigo-500/20 flex items-center justify-between">
+                                                            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                                                                <Sparkles size={12} /> AI 추천 검색 결과
+                                                            </span>
+                                                            <button onClick={() => setShowTitleHint(false)} className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors">
+                                                                <X size={14} />
                                                             </button>
-                                                        ))}
-                                                    </div>
-
-                                                    {/* Grade Selection */}
-                                                    <div className="space-y-2">
-                                                        <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">학년</label>
-                                                        <div className="grid grid-cols-3 gap-2">
-                                                            {schoolConfig.grades.map((g: number) => (
+                                                        </div>
+                                                        <div className="p-2 max-h-[250px] overflow-y-auto custom-scrollbar">
+                                                            {titleCandidates.map((cand, idx) => (
                                                                 <button
-                                                                    key={g}
-                                                                    onClick={() => toggleGrade(g)}
-                                                                    className={cn(
-                                                                        "py-3 rounded-xl text-sm font-black border transition-all",
-                                                                        selectedGrades.includes(g)
-                                                                            ? "bg-indigo-500/20 border-indigo-500 text-indigo-300 shadow-inner shadow-indigo-500/10"
-                                                                            : "bg-white/5 border-white/10 text-gray-500 hover:bg-white/10"
-                                                                    )}
+                                                                    key={idx}
+                                                                    onClick={() => {
+                                                                        setTitle(cand);
+                                                                        setShowTitleHint(false);
+                                                                    }}
+                                                                    className="w-full text-left px-4 py-3 rounded-xl hover:bg-[var(--color-background)]/[0.05] text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-all text-sm font-medium flex items-center gap-3 group"
                                                                 >
-                                                                    {g}학년
+                                                                    <span className="w-5 h-5 rounded-md bg-[var(--color-background)]/[0.05] flex items-center justify-center text-[10px] text-[var(--color-muted-foreground)] group-hover:bg-indigo-500/20 group-hover:text-indigo-400 transition-colors">
+                                                                        {idx + 1}
+                                                                    </span>
+                                                                    {cand}
                                                                 </button>
                                                             ))}
                                                         </div>
-                                                    </div>
-
-                                                    {/* Class Selection */}
-                                                    <div className="space-y-2">
-                                                        <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">반</label>
-                                                        <div className="grid grid-cols-6 gap-2">
-                                                            {[1, 2, 3, 4, 5, 6].map((c) => (
-                                                                <button
-                                                                    key={c}
-                                                                    onClick={() => toggleClass(c)}
-                                                                    className={cn(
-                                                                        "aspect-square rounded-xl text-sm font-black border transition-all flex items-center justify-center",
-                                                                        selectedClasses.includes(c)
-                                                                            ? "bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/30"
-                                                                            : "bg-white/5 border-white/10 text-gray-600 hover:bg-white/10 hover:text-gray-400"
-                                                                    )}
-                                                                >
-                                                                    {c}
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {targetCategory === 'student' && (
-                                                <div className="space-y-2">
-                                                    <label className="text-[10px] text-gray-500 font-bold uppercase tracking-widest pl-1">개별 학번 입력</label>
-                                                    <textarea
-                                                        value={targetStudents}
-                                                        onChange={e => setTargetStudents(e.target.value)}
-                                                        placeholder="학번 입력 (예: 1101, 1102)"
-                                                        className="w-full h-24 bg-black/20 border border-white/10 rounded-xl p-4 text-sm text-white focus:border-indigo-500/50 outline-none resize-none font-mono"
-                                                    />
-                                                    <p className="text-[10px] text-gray-600">콤마(,) 또는 공백으로 구분하여 입력하세요.</p>
-                                                </div>
-                                            )}
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
                                         </div>
                                     </div>
+                                </section>
 
-                                    {/* Deadline */}
-                                    <div className="space-y-4">
-                                        <h3 className="text-white font-bold text-lg flex items-center gap-2">
-                                            <Clock size={20} className="text-indigo-400" /> 제출 마감
-                                            <span className="text-xs text-indigo-400 font-normal ml-1">
-                                                (오늘로부터 {Math.ceil((new Date(deadline).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24))}일 뒤)
-                                            </span>
-                                        </h3>
-                                        <div className="flex items-center justify-between bg-white/5 border border-white/5 p-4 rounded-2xl">
-                                            <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Minus size={18} /></button>
-                                            <div className="text-center">
-                                                <div className="text-xl font-black text-white">{formattedDeadline}</div>
-                                                <div className="text-xs text-gray-500 font-bold mt-1">
-                                                    오전 8시 마감
+                                {/* SECTION 2: FORM BUILDER */}
+                                {true && (
+                                    <motion.section
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="space-y-6 pt-4 border-t border-[var(--color-border)]"
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+                                                <h3 className="text-xl font-black text-[var(--color-foreground)] tracking-tight">항목 구성 설정</h3>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-4">
+                                            {formItems.map((item) => (
+                                                <motion.div key={item.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-6 space-y-4 hover:border-indigo-600/30 transition-all shadow-sm">
+                                                    <div className="flex items-center gap-4">
+                                                        <div className="p-3 bg-indigo-600/10 rounded-2xl text-indigo-600">
+                                                            {item.type === 'text' ? <AlignLeft size={20} /> : <ListChecks size={20} />}
+                                                        </div>
+                                                        <input
+                                                            value={item.label}
+                                                            onChange={(e) => updateFormItem(item.id, { label: e.target.value })}
+                                                            placeholder="질문 내용을 입력하세요"
+                                                            className="flex-1 bg-transparent border-none outline-none text-[var(--color-foreground)] font-black text-lg placeholder:text-[var(--color-muted-foreground)]"
+                                                        />
+                                                    </div>
+                                                    {item.options && (
+                                                        <div className="ml-16 space-y-3">
+                                                            {item.options.map((opt, optIdx) => (
+                                                                <div key={optIdx} className="flex items-center gap-3 group">
+                                                                    <div className="w-2 h-2 rounded-full bg-[var(--color-border)] group-focus-within:bg-indigo-600 transition-colors" />
+                                                                    <input
+                                                                        value={opt}
+                                                                        onChange={(e) => {
+                                                                            const newOptions = [...(item.options || [])];
+                                                                            newOptions[optIdx] = e.target.value;
+                                                                            updateFormItem(item.id, { options: newOptions });
+                                                                        }}
+                                                                        className="flex-1 bg-transparent text-sm text-[var(--color-muted-foreground)] outline-none border-b border-[var(--color-border)] focus:border-indigo-500/50 py-1 transition-colors placeholder:text-[var(--color-muted-foreground)]/50"
+                                                                        placeholder={`옵션 ${optIdx + 1}`}
+                                                                    />
+                                                                </div>
+                                                            ))}
+                                                            <button
+                                                                onClick={() => {
+                                                                    const newOptions = [...(item.options || []), ''];
+                                                                    updateFormItem(item.id, { options: newOptions });
+                                                                }}
+                                                                className="text-[11px] text-indigo-400 hover:text-indigo-300 font-black uppercase tracking-widest mt-2 flex items-center gap-1.5"
+                                                            >
+                                                                <Plus size={12} /> 옵션 추가
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </motion.div>
+                                            ))}
+                                        </div>
+                                        <div className="flex items-center gap-3 px-1 text-[13px] text-indigo-600 font-black">
+                                            <AlertCircle size={16} />
+                                            <span>모든 회신형 문서에는 &apos;서명&apos;란이 기본으로 포함됩니다.</span>
+                                        </div>
+                                    </motion.section>
+                                )}
+
+                                {/* SECTION 4: TARGET & DEADLINE & SUBMIT */}
+                                {docType && (
+                                    <motion.section
+                                        initial={{ opacity: 0, y: 20 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        className="space-y-8 pt-4 border-t border-[var(--color-border)]"
+                                    >
+                                        {/* Target */}
+                                        <div className="space-y-6">
+                                            <div className="flex items-center justify-between w-full">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+                                                    <h3 className="text-xl font-black text-[var(--color-foreground)] tracking-tight">발송 대상 설정</h3>
+                                                </div>
+                                                <div className="px-4 py-1.5 bg-indigo-600 text-white rounded-full flex items-center gap-2 shadow-sm">
+                                                    <Users size={14} />
+                                                    <span className="text-sm font-black">
+                                                        총 <span className="">{calculateTotalTarget()}</span>명 선택됨
+                                                    </span>
                                                 </div>
                                             </div>
-                                            <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-white"><Plus size={18} /></button>
-                                        </div>
-                                    </div>
+                                            <div className="space-y-6">
+                                                <div className="flex p-1.5 bg-[var(--color-background)]/[0.05] border border-[var(--color-border)] rounded-2xl">
+                                                    <button
+                                                        onClick={() => setTargetCategory('group')}
+                                                        className={cn(
+                                                            "flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300",
+                                                            targetCategory === 'group'
+                                                                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                                                                : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-background)]/[0.05]"
+                                                        )}
+                                                    >
+                                                        그룹 선택
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setTargetCategory('student')}
+                                                        className={cn(
+                                                            "flex-1 py-3 text-sm font-bold rounded-xl transition-all duration-300",
+                                                            targetCategory === 'student'
+                                                                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                                                                : "text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] hover:bg-[var(--color-background)]/[0.05]"
+                                                        )}
+                                                    >
+                                                        개별 입력
+                                                    </button>
+                                                </div>
 
-                                    {/* Final Action Button */}
-                                    <div className="pt-6">
-                                        <button
-                                            onClick={startProcessing}
-                                            className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-600/20 flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
-                                        >
-                                            <Send size={24} />
-                                            발송 준비하기
-                                        </button>
-                                    </div>
-                                </motion.section>
-                            )}
-                        </motion.div>
+                                                {targetCategory === 'group' && schoolConfig ? (
+                                                    <div className="space-y-4">
+                                                        {/* Quick Selection (Total & Departments) */}
+                                                        <div className="flex gap-2.5">
+                                                            <button
+                                                                onClick={selectAllStudents}
+                                                                className={cn(
+                                                                    "flex-1 py-4 px-2 rounded-2xl text-[13px] font-black transition-all duration-300 border backdrop-blur-md",
+                                                                    (selectedGrades.length === schoolConfig.grades.length && selectedClasses.length === 6)
+                                                                        ? "bg-indigo-600 text-white border-indigo-400 shadow-xl shadow-indigo-600/30 ring-2 ring-indigo-500/20"
+                                                                        : "bg-[var(--color-background)]/[0.05] border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-background)]/[0.1] hover:border-[var(--color-border)]"
+                                                                )}
+                                                            >
+                                                                전체 학생
+                                                            </button>
+                                                            {schoolConfig.departments.map((dept: any) => {
+                                                                const isIoT = dept.id === 'iot';
+                                                                const isActive = selectedClasses.length === (dept.classRange.end - dept.classRange.start + 1) &&
+                                                                    selectedClasses.every(c => c >= dept.classRange.start && c <= dept.classRange.end);
+
+                                                                return (
+                                                                    <button
+                                                                        key={dept.id}
+                                                                        onClick={() => selectDept(dept)}
+                                                                        className={cn(
+                                                                            "flex-[1.5] py-4 px-2 rounded-2xl text-[13px] font-black transition-all duration-300 border backdrop-blur-md",
+                                                                            isActive
+                                                                                ? isIoT
+                                                                                    ? "bg-emerald-600 text-white border-emerald-400 shadow-xl shadow-emerald-500/30 ring-2 ring-emerald-500/20"
+                                                                                    : "bg-rose-600 text-white border-rose-400 shadow-xl shadow-rose-500/30 ring-2 ring-rose-500/20"
+                                                                                : "bg-[var(--color-background)]/[0.05] border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-background)]/[0.1] hover:border-[var(--color-border)]"
+                                                                        )}
+                                                                    >
+                                                                        {dept.name}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+
+                                                        {/* Grade Selection */}
+                                                        <div className="space-y-4">
+                                                            <div className="space-y-3">
+                                                                <p className="text-[13px] font-black text-[var(--color-foreground)] uppercase tracking-tight ml-1">학년 선택</p>
+                                                                <div className="flex gap-2">
+                                                                    {schoolConfig.grades.map((grade: number) => (
+                                                                        <button
+                                                                            key={grade}
+                                                                            onClick={() => toggleGrade(grade)}
+                                                                            className={cn(
+                                                                                "flex-1 h-12 rounded-xl text-sm font-black transition-all duration-300 border backdrop-blur-md",
+                                                                                selectedGrades.includes(grade)
+                                                                                    ? "bg-indigo-600 text-white border-indigo-400 shadow-lg shadow-indigo-600/30 ring-2 ring-indigo-500/20"
+                                                                                    : "bg-[var(--color-background)]/[0.05] border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-background)]/[0.1]"
+                                                                            )}
+                                                                        >
+                                                                            {grade}
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="space-y-3">
+                                                                <p className="text-[13px] font-black text-[var(--color-foreground)] uppercase tracking-tight ml-1">반 선택</p>
+                                                                <div className="flex gap-2">
+                                                                    {Array.from({ length: 6 }, (_, i) => i + 1).map((c) => {
+                                                                        const isSelected = selectedClasses.includes(c);
+                                                                        const dept = schoolConfig?.departments.find((d: any) => c >= d.classRange.start && c <= d.classRange.end);
+                                                                        const isIoT = dept?.id === 'iot';
+                                                                        return (
+                                                                            <button
+                                                                                key={c}
+                                                                                onClick={() => toggleClass(c)}
+                                                                                className={cn(
+                                                                                    "flex-1 h-12 rounded-xl text-sm font-black transition-all duration-300 border backdrop-blur-md flex flex-col items-center justify-center gap-0.5",
+                                                                                    isSelected
+                                                                                        ? isIoT
+                                                                                            ? "bg-emerald-600 text-white border-emerald-400 shadow-lg shadow-emerald-600/30 ring-2 ring-emerald-500/20"
+                                                                                            : "bg-rose-600 text-white border-rose-400 shadow-lg shadow-rose-600/30 ring-2 ring-rose-500/20"
+                                                                                        : "bg-[var(--color-background)]/[0.05] border-[var(--color-border)] text-[var(--color-muted-foreground)] hover:bg-[var(--color-background)]/[0.1]"
+                                                                                )}
+                                                                            >
+                                                                                <span className="leading-none text-base">{c}</span>
+                                                                                <span className={cn(
+                                                                                    "text-[9px] font-bold opacity-0 transition-opacity leading-none mt-0.5",
+                                                                                    isSelected ? "opacity-60" : "group-hover:opacity-40"
+                                                                                )}>
+                                                                                    {dept?.shortName || '일반'}
+                                                                                </span>
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ) : targetCategory === 'student' ? (
+                                                    <div className="space-y-4">
+                                                        <div className="flex items-center justify-between px-1">
+                                                            <label className="text-sm text-[var(--color-muted-foreground)] font-bold uppercase tracking-widest">개별 학번 입력</label>
+                                                            {targetStudents.trim() && (
+                                                                <button
+                                                                    onClick={() => setShowStudentListModal(true)}
+                                                                    className="px-4 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-full flex items-center gap-2 text-sm font-black text-indigo-400 hover:bg-indigo-500/20 transition-all"
+                                                                >
+                                                                    <Users size={14} />
+                                                                    <span className="text-indigo-400">명단 확인</span>
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        <textarea
+                                                            value={targetStudents}
+                                                            onChange={e => setTargetStudents(e.target.value)}
+                                                            placeholder="학번 입력 (예: 1101, 1102 ... 줄바꿈 가능)"
+                                                            className={cn(
+                                                                "w-full h-24 bg-[var(--color-background)]/[0.05] border rounded-2xl p-4 text-sm text-[var(--color-foreground)] outline-none resize-none font-mono transition-all duration-300",
+                                                                targetStudents.split(/[\n, ]+/).filter(id => id.trim()).some(id => schoolConfig && id.trim().length !== schoolConfig.studentIdLength)
+                                                                    ? "border-rose-500/50 focus:border-rose-500 focus:bg-rose-500/[0.02]"
+                                                                    : "border-[var(--color-border)] focus:border-indigo-500/50 focus:bg-[var(--color-background)]/[0.07]"
+                                                            )}
+                                                        />
+                                                        {targetStudents.split(/[\n, ]+/).filter(id => id.trim()).some(id => schoolConfig && id.trim().length !== schoolConfig.studentIdLength) && (
+                                                            <p className="text-[12px] text-rose-500 font-bold flex items-center gap-1 animate-pulse">
+                                                                <AlertCircle size={14} /> {schoolConfig?.studentIdLength || 4}자리 학번이 아닌 입력이 포함되어 있습니다. 확인 부탁드립니다.
+                                                            </p>
+                                                        )}
+                                                        <p className="text-[12px] text-[var(--color-muted-foreground)]">콤마(,), 줄바꿈, 또는 공백으로 학번을 구분하세요.</p>
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        </div>
+
+                                        {/* Deadline */}
+                                        <div className="space-y-4">
+                                            <h3 className="text-[var(--color-foreground)] font-bold text-lg flex items-center gap-2">
+                                                <Clock size={20} className="text-indigo-500" /> 제출 마감
+                                                <span className="text-xs text-indigo-500 font-normal ml-1">
+                                                    (오늘로부터 {Math.ceil((new Date(deadline).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24))}일 뒤)
+                                                </span>
+                                            </h3>
+                                            <div className="flex items-center justify-between bg-[var(--color-background)]/[0.05] border border-[var(--color-border)] p-4 rounded-2xl">
+                                                <button onClick={() => adjustDeadline(-1)} className="w-10 h-10 rounded-xl bg-[var(--color-background)]/[0.05] hover:bg-[var(--color-background)]/[0.1] flex items-center justify-center text-[var(--color-foreground)]"><Minus size={18} /></button>
+                                                <div className="text-center">
+                                                    <div className="text-xl font-black text-[var(--color-foreground)]">{formattedDeadline}</div>
+                                                    <div className="text-xs text-[var(--color-muted-foreground)] font-bold mt-1">
+                                                        오전 8시 마감
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => adjustDeadline(1)} className="w-10 h-10 rounded-xl bg-[var(--color-background)]/[0.05] hover:bg-[var(--color-background)]/[0.1] flex items-center justify-center text-[var(--color-foreground)]"><Plus size={18} /></button>
+                                            </div>
+                                        </div>
+
+                                        {/* Final Action Button */}
+                                        <div className="pt-8 mb-10">
+                                            <button
+                                                onClick={startProcessing}
+                                                className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-[2rem] font-black text-xl shadow-2xl shadow-indigo-600/30 flex items-center justify-center gap-4 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] group"
+                                            >
+                                                <Send size={28} className="transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
+                                                {initialData ? '변동 사항 저장' : '발송 목록에 추가'}
+                                            </button>
+                                        </div>
+                                    </motion.section>
+                                )}
+                            </motion.div>
+                        </div>
                     )}
 
                 </AnimatePresence>
             </div>
 
-            {/* Inline Preview Modal */}
+            {/* Student List Verification Modal */}
             <AnimatePresence>
-                {showPreview && tempDoc && (
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-                        onClick={() => setShowPreview(false)}
-                    >
+                {
+                    showStudentListModal && (
                         <motion.div
-                            initial={{ scale: 0.9, y: 20 }}
-                            animate={{ scale: 1, y: 0 }}
-                            exit={{ scale: 0.9, y: 20 }}
-                            onClick={(e) => e.stopPropagation()}
-                            className="bg-zinc-900 border border-white/10 rounded-[3rem] p-3 shadow-2xl relative w-full max-w-[375px] h-[80vh] flex flex-col"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+                            onClick={() => setShowStudentListModal(false)}
                         >
-                            {/* Phone Frame Header */}
-                            <div className="h-6 flex justify-center items-center mb-2">
-                                <div className="w-20 h-1 bg-white/20 rounded-full"></div>
-                            </div>
-
-                            {/* Content */}
-                            <div className="flex-1 bg-white rounded-[2rem] overflow-hidden relative">
-                                <iframe
-                                    src={`/s/${tempDoc.id}`}
-                                    className="w-full h-full border-0"
-                                    title="Student Preview"
-                                />
-                            </div>
-
-                            {/* Close Button */}
-                            <button
-                                onClick={() => setShowPreview(false)}
-                                className="absolute -right-12 top-0 p-3 bg-white/10 hover:bg-white/20 text-white rounded-full transition-colors"
+                            <motion.div
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0.9, opacity: 0 }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="bg-[var(--color-card)] border border-[var(--color-border)] rounded-2xl w-full max-w-md max-h-[70vh] flex flex-col shadow-2xl overflow-hidden"
                             >
-                                <X size={24} />
-                            </button>
+                                {/* Header */}
+                                <div className="p-6 border-b border-[var(--color-border)] flex items-center justify-between bg-[var(--color-background)]/[0.02]">
+                                    <div className="flex items-center gap-3">
+                                        <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400">
+                                            <Users size={18} />
+                                        </div>
+                                        <h3 className="text-lg font-bold text-[var(--color-foreground)] flex items-center gap-2">
+                                            입력 명단 확인
+                                            <span className="text-sm font-black text-indigo-500 bg-indigo-500/10 px-2 py-0.5 rounded-full border border-indigo-500/20">
+                                                {getMatchedStudents().length}명
+                                            </span>
+                                        </h3>
+                                    </div>
+                                    <button onClick={() => setShowStudentListModal(false)} className="text-[var(--color-muted-foreground)] hover:text-[var(--color-foreground)] transition-colors">
+                                        <X size={20} />
+                                    </button>
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                                    <div className="space-y-2">
+                                        {getMatchedStudents().map((student, idx) => (
+                                            <div
+                                                key={idx}
+                                                className={cn(
+                                                    "flex items-center justify-between p-3 rounded-xl border transition-all",
+                                                    student.isFound
+                                                        ? "bg-white/[0.03] border-white/5"
+                                                        : "bg-rose-500/5 border-rose-500/20"
+                                                )}
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <span className="text-sm font-mono text-[var(--color-muted-foreground)]">{student.id}</span>
+                                                    <span className={cn(
+                                                        "text-sm font-bold",
+                                                        student.isFound ? "text-[var(--color-foreground)]" : "text-rose-500"
+                                                    )}>
+                                                        {student.name}
+                                                    </span>
+                                                </div>
+                                                {student.isFound ? (
+                                                    <CheckCircle2 size={14} className="text-emerald-500/50" />
+                                                ) : (
+                                                    <AlertCircle size={14} className="text-rose-500/50" />
+                                                )}
+                                            </div>
+                                        ))}
+                                        {getMatchedStudents().length === 0 && (
+                                            <div className="text-center py-12 text-[var(--color-muted-foreground)] text-sm">
+                                                입력된 학번이 없습니다.
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="p-4 border-t border-[var(--color-border)] bg-[var(--color-background)]/[0.01] flex justify-center text-[11px] text-[var(--color-muted-foreground)] font-medium">
+                                    등록되지 않은 학번은 빨간색으로 표시됩니다.
+                                </div>
+                            </motion.div>
                         </motion.div>
-                    </motion.div>
-                )}
+                    )
+                }
             </AnimatePresence>
-        </div>
+
+            {/* FULL PREVIEW MODAL */}
+            <AnimatePresence>
+                {
+                    showFullPreview && previewUrl && (
+                        <motion.div
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[100] bg-[var(--color-background)]/90 backdrop-blur-md flex flex-col p-4 md:p-10"
+                            onClick={() => setShowFullPreview(false)}
+                        >
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-[var(--color-foreground)] font-black text-xl truncate max-w-[300px]">{file?.name}</h3>
+                                <button
+                                    onClick={() => setShowFullPreview(false)}
+                                    className="w-10 h-10 bg-[var(--color-background)]/[0.1] hover:bg-[var(--color-background)]/[0.2] text-[var(--color-foreground)] rounded-full flex items-center justify-center transition-all border border-[var(--color-border)]"
+                                >
+                                    <X size={24} />
+                                </button>
+                            </div>
+                            <div className="flex-1 w-full max-w-5xl mx-auto rounded-3xl overflow-hidden bg-white shadow-2xl relative border border-[var(--color-border)]" onClick={e => e.stopPropagation()}>
+                                {file?.type.startsWith('image/') ? (
+                                    <div className="w-full h-full overflow-auto flex items-start justify-center p-4">
+                                        <img src={previewUrl} alt="Full Preview" className="max-w-none w-full h-auto" />
+                                    </div>
+                                ) : (
+                                    <iframe
+                                        src={`${previewUrl}#toolbar=0`}
+                                        className="w-full h-full border-0"
+                                        title="Full PDF Preview"
+                                    />
+                                )}
+                            </div>
+                            <div className="mt-6 flex justify-center">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        const link = document.createElement('a');
+                                        link.href = previewUrl;
+                                        link.download = file?.name || 'document';
+                                        link.click();
+                                    }}
+                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-2 shadow-xl active:scale-[0.95] transition-all"
+                                >
+                                    <Download size={20} /> 기기에 저장하기 (다운로드)
+                                </button>
+                            </div>
+                        </motion.div>
+                    )
+                }
+            </AnimatePresence >
+        </div >
     );
 }

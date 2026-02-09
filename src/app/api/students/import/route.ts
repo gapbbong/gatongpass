@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 
 const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1Fnvbd2_oDlZ_JZ874smNhDoXDqvZhOzApjAFleeZIdU/export?format=csv&gid=153974185';
 
+// In-memory cache
+let cachedStudents: any[] | null = null;
+let lastFetchTime: number = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
+
 // Simple CSV Parser handling quotes
 function parseCSV(text: string) {
     const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
@@ -51,6 +56,20 @@ function parseCSVLine(line: string) {
 
 export async function GET() {
     try {
+        const now = Date.now();
+
+        // Return cached data if valid
+        if (cachedStudents && (now - lastFetchTime < CACHE_TTL)) {
+            console.log('Returning cached student data (TTL: 5m)');
+            return NextResponse.json({
+                success: true,
+                count: cachedStudents.length,
+                students: cachedStudents,
+                fromCache: true
+            });
+        }
+
+        console.log('Fetching fresh student data from Google Sheets...');
         const response = await fetch(GOOGLE_SHEET_CSV_URL);
         if (!response.ok) {
             throw new Error(`Failed to fetch sheet: ${response.statusText}`);
@@ -71,11 +90,18 @@ export async function GET() {
                 submitted: false, // Default status
                 // Additional fields can be mapped here if needed
                 phone: row['학생폰'],
-                parent_phone: row['모(연락처)'] || row['부(연락처)']
+                parents: {
+                    father: row['부연락처'] || row['부(연락처)'],
+                    mother: row['모연락처'] || row['모(연락처)']
+                }
             }));
 
         // Sort by student number
         students.sort((a, b) => a.student_num - b.student_num);
+
+        // Update cache
+        cachedStudents = students;
+        lastFetchTime = now;
 
         return NextResponse.json({
             success: true,

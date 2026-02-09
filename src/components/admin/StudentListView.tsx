@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Filter, CheckCircle2, Circle, Clock, Mail, ChevronRight, User, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { createSheet, generateSheetId } from '@/lib/gasClient';
 import { cn } from '@/lib/utils';
 
 export interface Student {
@@ -18,9 +19,11 @@ export interface Student {
 interface StudentListViewProps {
     students: Student[];
     loading?: boolean;
+    docId?: string;
+    sheetId?: string;
 }
 
-export default function StudentListView({ students, loading }: StudentListViewProps) {
+export default function StudentListView({ students, loading, docId, sheetId }: StudentListViewProps) {
     const [searchQuery, setSearchQuery] = useState('');
     const [filter, setFilter] = useState<'all' | 'submitted' | 'pending'>('all');
     const [isImporting, setIsImporting] = useState(false);
@@ -32,6 +35,38 @@ export default function StudentListView({ students, loading }: StudentListViewPr
             setLocalStudents(students);
         }
     }, [students]);
+
+    const handleOpenSheet = async () => {
+        if (!docId) {
+            alert("문서 정보가 없습니다.");
+            return;
+        }
+
+        const targetSheetId = sheetId || generateSheetId('school', new Date().getFullYear(), docId);
+
+        try {
+            // Using undefined headers to trigger default backend logic (avoid empty row error)
+            const res = await createSheet(targetSheetId, undefined);
+            if (res.success && res.data.sheetUrl) {
+                window.open(res.data.sheetUrl, '_blank');
+            } else {
+                if (res.message && (res.message.includes('이미') || res.message.includes('exists'))) {
+                    // Assuming the error means sheet creation failed but it likely exists.
+                    // Ideally we should just verify existence, but GAS createSheet tries to create.
+                    // If it exists, it should return success.
+                    // But currently it seems to error if logic is rigid.
+                    // Wait, previous fix in ActiveDocumentViewer instructed user to delete.
+                    // We should keep consistent behavior.
+                    alert("⚠️ 시트 생성 오류\n\n이미 동일한 이름의 시트가 존재합니다. (이전 시도에서 생성됨)\n\n구글 시트 하단의 탭을 삭제한 후 다시 버튼을 눌러주세요!");
+                } else {
+                    alert("시트를 열 수 없습니다: " + res.message);
+                }
+            }
+        } catch (e) {
+            console.error(e);
+            alert("오류가 발생했습니다.");
+        }
+    };
 
     const handleImport = async () => {
         if (!confirm('구글 시트에서 최신 명렬표를 가져오시겠습니까? 기존 데이터는 업데이트됩니다.')) return;
@@ -138,14 +173,12 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                         >
                             <Mail size={16} /> 미제출자 일괄 알림
                         </button>
-                        <a
-                            href="https://docs.google.com/spreadsheets/d/1Fnvbd2_oDlZ_JZ874smNhDoXDqvZhOzApjAFleeZIdU/edit"
-                            target="_blank"
-                            rel="noopener noreferrer"
+                        <button
+                            onClick={handleOpenSheet}
                             className="flex-1 py-3 bg-green-600/10 hover:bg-green-600/20 text-green-400 rounded-xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 border border-green-500/20 active:scale-[0.98] transition-all"
                         >
                             <ExternalLink size={16} /> 구글시트 열기
-                        </a>
+                        </button>
                     </div>
 
                     <div className="flex p-1 bg-white/[0.03] border border-white/5 rounded-xl">
@@ -208,7 +241,7 @@ export default function StudentListView({ students, loading }: StudentListViewPr
                                             <CheckCircle2 size={14} />
                                         </div>
                                     ) : (
-                                        <button className="p-1.5 bg-white/5 hover:bg-white/10 rounded-lg text-gray-600 hover:text-indigo-400 transition-all">
+                                        <button disabled className="p-1.5 bg-white/5 rounded-lg text-gray-700 cursor-not-allowed opacity-50">
                                             <Mail size={14} />
                                         </button>
                                     )}

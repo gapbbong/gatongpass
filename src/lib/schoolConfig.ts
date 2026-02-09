@@ -1,6 +1,7 @@
 export interface Department {
     id: string;
     name: string;
+    shortName: string;
     classRange: {
         start: number;
         end: number;
@@ -11,22 +12,27 @@ export interface SchoolConfig {
     schoolName: string;
     region: string;
     schoolLevel: 'elementary' | 'middle' | 'high';
+    displayMode: 'light' | 'dark';
     contactEmail: string;
     kakaoId?: string;
     grades: number[];
     departments: Department[];
+    studentIdLength: number;
+    studentListSheetId?: string;
 }
 
 const DEFAULT_CONFIG: SchoolConfig = {
     schoolName: '가통고등학교',
     region: '서울',
     schoolLevel: 'high',
+    displayMode: 'dark',
     contactEmail: 'admin@gatong.hs.kr',
     grades: [1, 2, 3],
     departments: [
-        { id: 'iot', name: 'IoT전기과', classRange: { start: 1, end: 3 } },
-        { id: 'game', name: '게임콘텐츠과', classRange: { start: 4, end: 6 } }
-    ]
+        { id: 'iot', name: 'IoT전기과', shortName: '전기', classRange: { start: 1, end: 3 } },
+        { id: 'game', name: '게임콘텐츠과', shortName: '게임', classRange: { start: 4, end: 6 } }
+    ],
+    studentIdLength: 4
 };
 
 export const getSchoolConfig = (): SchoolConfig => {
