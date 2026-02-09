@@ -330,7 +330,7 @@ function AdminDashboardContent() {
                             <LinkLogo schoolName={schoolName} />
                         </div>
                         <div className="flex items-center justify-between">
-                            <h2 className="text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-widest">문서 목록</h2>
+                            <h2 className="text-sm font-bold text-[var(--color-muted-foreground)] uppercase tracking-widest">가통 목록</h2>
                             <span className="text-xs font-bold text-[var(--color-muted-foreground)] bg-[var(--color-background)]/[0.05] border border-[var(--color-border)] px-2 py-0.5 rounded">{documents.length}</span>
                         </div>
                     </div>
@@ -346,7 +346,7 @@ function AdminDashboardContent() {
                             )}
                         >
                             <Plus size={16} />
-                            새 문서 만들기
+                            새 가통 만들기
                         </button>
                     </div>
 
@@ -452,7 +452,7 @@ function AdminDashboardContent() {
                                     <div className="flex items-center overflow-hidden">
                                         <FileText size={16} className="text-indigo-600 mr-2 shrink-0" />
                                         <h2 className="text-sm font-black text-[var(--color-foreground)] uppercase tracking-wider truncate">
-                                            {viewMode === 'create' ? '작성 (Editor)' : '문서 정보 (Info)'}
+                                            {viewMode === 'create' ? '작성 (Editor)' : '가통 정보 (Info)'}
                                         </h2>
                                     </div>
                                 </div>
@@ -472,9 +472,12 @@ function AdminDashboardContent() {
                                         <CorrespondenceWizard
                                             key={wizardKey}
                                             onSuccess={(newDoc) => {
-                                                setDocuments(prev => [newDoc, ...prev]);
-                                                localStorage.setItem('gatong_docs', JSON.stringify([newDoc, ...documents]));
-                                                handleSelectDoc(newDoc);
+                                                setDocuments(prev => {
+                                                    const exists = prev.find(d => d.id === newDoc.id);
+                                                    if (exists) return prev.map(d => d.id === newDoc.id ? newDoc : d);
+                                                    return [newDoc, ...prev];
+                                                });
+                                                // Removed handleSelectDoc to allow summary screen to stay visible
                                             }}
                                             onCancel={() => { }}
                                             onDraftUpdate={(draft) => setDraftRequest(draft)}
@@ -486,17 +489,15 @@ function AdminDashboardContent() {
                                             key={selectedDocId}
                                             initialData={selectedDocument}
                                             onSuccess={(updatedDoc) => {
-                                                const newDocs = documents.map(d => d.id === updatedDoc.id ? updatedDoc : d);
-                                                setDocuments(newDocs);
-                                                localStorage.setItem('gatong_docs', JSON.stringify(newDocs));
-                                                handleSelectDoc(updatedDoc);
+                                                setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+                                                // Removed handleSelectDoc to allow summary screen to stay visible
                                             }}
                                             onCancel={() => handleBackToList()}
                                             onDraftUpdate={(draft) => setDraftRequest(draft)}
                                         />
                                     </div>
                                 ) : (
-                                    <EmptyState text="문서를 선택하세요" icon={<FileText />} />
+                                    <EmptyState text="가통을 선택하세요" icon={<FileText />} />
                                 )}
                             </div>
                         </>

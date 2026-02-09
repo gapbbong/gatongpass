@@ -41,7 +41,8 @@ const DEFAULT_CONFIG: SchoolConfig = {
 export const getSchoolConfig = (): SchoolConfig => {
     if (typeof window === 'undefined') return DEFAULT_CONFIG;
     const stored = localStorage.getItem('school_config');
-    return stored ? JSON.parse(stored) : DEFAULT_CONFIG;
+    if (!stored) return DEFAULT_CONFIG;
+    return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
 };
 
 export const saveSchoolConfig = (config: SchoolConfig) => {

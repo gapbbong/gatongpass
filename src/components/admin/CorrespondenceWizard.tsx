@@ -327,7 +327,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
             setPreviewUrl(url);
 
             // Set title to filename automatically for all files
-            const filenameTitle = f.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : f.name.replace(/\.[^/.]+$/, "");
+            const filenameTitle = f.name === 'image.png' ? `가통_${new Date().getHours()}시${new Date().getMinutes()}분` : f.name.replace(/\.[^/.]+$/, "");
             setTitle(filenameTitle);
 
             // AI Title Recommendation (OCR) is skipped for file uploads per user request.
@@ -361,7 +361,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                         setPreviewUrl(url);
 
                         // Set title from filename
-                        const filenameTitle = blob.name === 'image.png' ? `문서_${new Date().getHours()}시${new Date().getMinutes()}분` : blob.name.replace(/\.[^/.]+$/, "");
+                        const filenameTitle = blob.name === 'image.png' ? `가통_${new Date().getHours()}시${new Date().getMinutes()}분` : blob.name.replace(/\.[^/.]+$/, "");
                         setTitle(filenameTitle);
 
                         if (blob.type.startsWith('image/')) analyzeImage(blob);
@@ -553,9 +553,8 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
         localStorage.setItem('gatong_docs', JSON.stringify(savedDocs));
 
         // Auto-register to dashboard IMMEDIATELY
-        onSuccess(newDoc);
-
         setTempDoc(newDoc);
+        onSuccess(newDoc);
         setIsSheetCreating(false);
         setStep('completed');
 
@@ -718,7 +717,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                             </>
                                         ) : (
                                             <>
-                                                <p className="text-[var(--color-foreground)] font-bold text-lg mb-0.5 tracking-tight">문서 파일을 업로드하세요</p>
+                                                <p className="text-[var(--color-foreground)] font-bold text-lg mb-0.5 tracking-tight">가통 파일을 업로드하세요</p>
                                                 <p className="text-[var(--color-muted-foreground)] text-xs mb-3">PDF, JPG, PNG 형식을 지원합니다</p>
                                                 <div className="text-indigo-300 text-[10px] font-bold bg-indigo-500/10 px-3 py-1.5 rounded-full inline-flex items-center gap-2 border border-indigo-500/20">
                                                     <span className="flex h-1.5 w-1.5 rounded-full bg-indigo-500 animate-pulse"></span>
@@ -907,7 +906,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                         </div>
                                         <div className="flex items-center gap-3 px-1 text-[13px] text-indigo-600 font-black">
                                             <AlertCircle size={16} />
-                                            <span>모든 회신형 문서에는 &apos;서명&apos;란이 기본으로 포함됩니다.</span>
+                                            <span>모든 회신형 가통에는 &apos;서명&apos;란이 기본으로 포함됩니다.</span>
                                         </div>
                                     </motion.section>
                                 )}
@@ -1003,7 +1002,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                                             <div className="space-y-3">
                                                                 <p className="text-[13px] font-black text-[var(--color-foreground)] uppercase tracking-tight ml-1">학년 선택</p>
                                                                 <div className="flex gap-2">
-                                                                    {schoolConfig.grades.map((grade: number) => (
+                                                                    {schoolConfig?.grades?.map((grade: number) => (
                                                                         <button
                                                                             key={grade}
                                                                             onClick={() => toggleGrade(grade)}
@@ -1025,7 +1024,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                                                 <div className="flex gap-2">
                                                                     {Array.from({ length: 6 }, (_, i) => i + 1).map((c) => {
                                                                         const isSelected = selectedClasses.includes(c);
-                                                                        const dept = schoolConfig?.departments.find((d: any) => c >= d.classRange.start && c <= d.classRange.end);
+                                                                        const dept = schoolConfig?.departments?.find((d: any) => c >= d.classRange.start && c <= d.classRange.end);
                                                                         const isIoT = dept?.id === 'iot';
                                                                         return (
                                                                             <button
@@ -1210,7 +1209,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                         </motion.div>
                     )
                 }
-            </AnimatePresence>
+            </AnimatePresence >
 
             {/* FULL PREVIEW MODAL (Smartphone Frame) */}
             <AnimatePresence>
@@ -1267,6 +1266,6 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                     )
                 }
             </AnimatePresence>
-        </div >
+        </div>
     );
 }

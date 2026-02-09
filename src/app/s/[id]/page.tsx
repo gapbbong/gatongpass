@@ -7,6 +7,7 @@ import { ChevronRight, Check, User, PenTool, Calendar, ShieldCheck, AlertCircle,
 import { cn } from '@/lib/utils';
 import SignatureCanvas from 'react-signature-canvas';
 import { submitToGAS, generateSheetId } from '@/lib/gasClient';
+import { getSchoolConfig } from '@/lib/schoolConfig';
 
 const GREETINGS_MAP: Record<string, string[]> = {
     high: [
@@ -230,8 +231,10 @@ export default function SubmissionPage() {
             }) || [];
 
             // 2. Send to GAS
+            const schoolCfg = getSchoolConfig();
             const result = await submitToGAS({
                 sheetId: sheetId,
+                spreadsheetId: schoolCfg.submissionSpreadsheetId,
                 values: responseValues,
                 studentInfo: {
                     grade: parseInt(studentInfo.grade),

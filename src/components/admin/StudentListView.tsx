@@ -4,6 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { Search, Filter, CheckCircle2, Circle, Clock, Mail, ChevronRight, User, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createSheet, generateSheetId } from '@/lib/gasClient';
+import { getSchoolConfig } from '@/lib/schoolConfig';
 import { cn } from '@/lib/utils';
 
 export interface Student {
@@ -46,7 +47,8 @@ export default function StudentListView({ students, loading, docId, sheetId }: S
 
         try {
             // Using undefined headers to trigger default backend logic (avoid empty row error)
-            const res = await createSheet(targetSheetId, undefined);
+            const schoolCfg = getSchoolConfig();
+            const res = await createSheet(targetSheetId, undefined, schoolCfg.submissionSpreadsheetId);
             if (res.success && res.data.sheetUrl) {
                 window.open(res.data.sheetUrl, '_blank');
             } else {

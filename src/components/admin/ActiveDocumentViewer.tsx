@@ -221,7 +221,7 @@ export default function ActiveDocumentViewer({ document, students = [], submissi
                 <div className="p-4 bg-[var(--color-card)] rounded-2xl border border-[var(--color-border)] mb-4">
                     <FileText size={32} className="opacity-20" />
                 </div>
-                <p className="font-bold text-sm">문서를 선택하거나 작성해주세요.</p>
+                <p className="font-bold text-sm">가통을 선택하거나 작성해주세요.</p>
             </div>
         );
     }
@@ -457,7 +457,7 @@ export default function ActiveDocumentViewer({ document, students = [], submissi
                         <div className="bg-[var(--color-card)] rounded-2xl border border-[var(--color-border)] overflow-hidden">
                             <div className="p-4 border-b border-[var(--color-border)] bg-[var(--color-card)] flex items-center gap-2">
                                 <FileText size={16} className="text-[var(--color-muted-foreground)]" />
-                                <h3 className="font-bold text-[var(--color-muted-foreground)] text-sm">문서 내용 미리보기</h3>
+                                <h3 className="font-bold text-[var(--color-muted-foreground)] text-sm">가통 내용 미리보기</h3>
                             </div>
                             <div className="w-full bg-[var(--color-background)]/[0.02] p-6">
                                 {renderPreview()}
