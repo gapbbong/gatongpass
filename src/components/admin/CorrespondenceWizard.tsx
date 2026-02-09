@@ -1117,7 +1117,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                                 className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-[2rem] font-black text-xl shadow-2xl shadow-indigo-600/30 flex items-center justify-center gap-4 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] group"
                                             >
                                                 <Send size={28} className="transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
-                                                {initialData ? '변동 사항 저장' : '취합 등록'}
+                                                {'취합 등록'}
                                             </button>
                                         </div>
                                     </motion.section>
