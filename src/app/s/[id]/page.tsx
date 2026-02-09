@@ -73,8 +73,8 @@ export default function SubmissionPage() {
 
     // Form States
     const [studentInfo, setStudentInfo] = useState({
-        grade: '1',
-        classNum: '1',
+        grade: '',
+        classNum: '',
         studentNum: '',
         name: '',
         authPhone: '' // Parent phone last 4 digits
@@ -84,6 +84,8 @@ export default function SubmissionPage() {
     const [errorMsg, setErrorMsg] = useState('');
     const [engagementPoints, setEngagementPoints] = useState(36.5);
     const [schoolLevel, setSchoolLevel] = useState<'elementary' | 'middle' | 'high'>('high');
+    const [grades, setGrades] = useState<number[]>([1, 2, 3]);
+    const [classRange, setClassRange] = useState({ start: 1, end: 12 });
     const [randomGreeting, setRandomGreeting] = useState('');
     const [showFullPreview, setShowFullPreview] = useState(false);
     const sigPadRef = useRef<SignatureCanvas>(null);
@@ -94,10 +96,34 @@ export default function SubmissionPage() {
         // Load School Config for Phrasing
         const storedConfig = localStorage.getItem('school_config');
         let level: 'elementary' | 'middle' | 'high' = 'high';
+        let currentGrades = [1, 2, 3];
+        let currentClassRange = { start: 1, end: 12 };
+
         if (storedConfig) {
             const config = JSON.parse(storedConfig);
             level = config.schoolLevel || 'high';
+            currentGrades = config.grades || [1, 2, 3];
+
+            // For now, use the maximum range from all departments if available
+            if (config.departments && config.departments.length > 0) {
+                const starts = config.departments.map((d: any) => d.classRange.start);
+                const ends = config.departments.map((d: any) => d.classRange.end);
+                currentClassRange = {
+                    start: Math.min(...starts),
+                    end: Math.max(...ends)
+                };
+            }
+
             setSchoolLevel(level);
+            setGrades(currentGrades);
+            setClassRange(currentClassRange);
+
+            // Initialize studentInfo with defaults from config
+            setStudentInfo(prev => ({
+                ...prev,
+                grade: currentGrades[0]?.toString() || '1',
+                classNum: currentClassRange.start.toString() || '1'
+            }));
         }
 
         const greetings = GREETINGS_MAP[level] || GREETINGS_MAP.default;
@@ -373,7 +399,7 @@ export default function SubmissionPage() {
                                             onChange={(e) => setStudentInfo({ ...studentInfo, grade: e.target.value })}
                                             className="w-full p-5 bg-white border-2 border-slate-100 rounded-2xl font-black text-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all appearance-none"
                                         >
-                                            {[1, 2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
+                                            {grades.map(g => <option key={g} value={g}>{g}학년</option>)}
                                         </select>
                                     </div>
                                     <div className="space-y-1">
@@ -383,7 +409,7 @@ export default function SubmissionPage() {
                                             onChange={(e) => setStudentInfo({ ...studentInfo, classNum: e.target.value })}
                                             className="w-full p-5 bg-white border-2 border-slate-100 rounded-2xl font-black text-xl focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 outline-none transition-all appearance-none"
                                         >
-                                            {Array.from({ length: 12 }, (_, i) => i + 1).map(c => <option key={c} value={c}>{c}반</option>)}
+                                            {Array.from({ length: classRange.end - classRange.start + 1 }, (_, i) => i + classRange.start).map(c => <option key={c} value={c}>{c}반</option>)}
                                         </select>
                                     </div>
                                 </div>

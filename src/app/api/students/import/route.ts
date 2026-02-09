@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1Fnvbd2_oDlZ_JZ874smNhDoXDqvZhOzApjAFleeZIdU/export?format=csv&gid=153974185';
+const GOOGLE_SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1OgMiyfnQwFYC06KcOTFGKLzcizD9nuvXvCcTWkIxDWg/export?format=csv&gid=0';
 
 // In-memory cache
 let cachedStudents: any[] | null = null;
@@ -58,9 +58,7 @@ export async function GET() {
     try {
         const now = Date.now();
 
-        // Return cached data if valid
         if (cachedStudents && (now - lastFetchTime < CACHE_TTL)) {
-            console.log('Returning cached student data (TTL: 5m)');
             return NextResponse.json({
                 success: true,
                 count: cachedStudents.length,
@@ -69,51 +67,55 @@ export async function GET() {
             });
         }
 
-        console.log('Fetching fresh student data from Google Sheets...');
         const response = await fetch(GOOGLE_SHEET_CSV_URL);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch sheet: ${response.statusText}`);
-        }
+        if (!response.ok) throw new Error(`Failed to fetch sheet: ${response.statusText}`);
 
         const csvText = await response.text();
         const parsedData = parseCSV(csvText);
 
-        // Transform to Student interface structure, filtering out students with '학적' status (e.g., 전학, 자퇴)
-        const students = parsedData
-            .filter(row => !row['학적'] || row['학적'].trim() === '') // Only include empty status
-            .map((row) => ({
-                id: row['PID'] || `STU-${row['학번']}`,
-                grade: parseInt(row['학년']) || 1,
-                class_num: parseInt(row['반']) || 1,
-                student_num: parseInt(row['학번']) || 0,
+        const students = parsedData.map((row: any) => {
+            const studentIdRaw = row['학번'] || '';
+            let grade = 0;
+            let classNum = 0;
+            let stuNum = 0;
+
+            // Handle 4-digit student ID (e.g., 1101 -> Grade 1, Class 1, Number 01)
+            if (studentIdRaw.length === 4) {
+                grade = parseInt(studentIdRaw[0]);
+                classNum = parseInt(studentIdRaw.substring(1, 2));
+                stuNum = parseInt(studentIdRaw.substring(2));
+            } else if (studentIdRaw.length === 5) { // 11001
+                grade = parseInt(studentIdRaw[0]);
+                classNum = parseInt(studentIdRaw.substring(1, 3));
+                stuNum = parseInt(studentIdRaw.substring(3));
+            }
+
+            return {
+                id: `STU-${studentIdRaw}`,
+                grade,
+                class_num: classNum,
+                student_num: stuNum,
                 name: row['이름'] || 'Unknown',
-                submitted: false, // Default status
-                // Additional fields can be mapped here if needed
-                phone: row['학생폰'],
+                submitted: false,
                 parents: {
-                    father: row['부연락처'] || row['부(연락처)'],
-                    mother: row['모연락처'] || row['모(연락처)']
+                    father: row['부(연락처)'] || row['부연락처'],
+                    mother: row['모(연락처)'] || row['모연락처']
                 }
-            }));
+            };
+        });
 
-        // Sort by student number
-        students.sort((a, b) => a.student_num - b.student_num);
+        students.sort((a: any, b: any) => {
+            const aVal = (a.grade * 10000) + (a.class_num * 100) + a.student_num;
+            const bVal = (b.grade * 10000) + (b.class_num * 100) + b.student_num;
+            return aVal - bVal;
+        });
 
-        // Update cache
         cachedStudents = students;
         lastFetchTime = now;
 
-        return NextResponse.json({
-            success: true,
-            count: students.length,
-            students
-        });
-
+        return NextResponse.json({ success: true, count: students.length, students });
     } catch (error) {
         console.error('Import error:', error);
-        return NextResponse.json(
-            { success: false, error: 'Failed to import student data' },
-            { status: 500 }
-        );
+        return NextResponse.json({ success: false, error: 'Failed to import student data' }, { status: 500 });
     }
 }
