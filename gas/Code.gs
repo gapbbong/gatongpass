@@ -161,7 +161,7 @@ function sanitizeInput(data) {
 
 function handleSubmit(data) {
   try {
-    const sheet = getOrCreateSheet(data.sheetId);
+    const sheet = getOrCreateSheet(data.sheetId, data.spreadsheetId);
     
     // 헤더가 없으면 생성
     if (sheet.getLastRow() === 0) {
@@ -200,7 +200,7 @@ function handleSubmit(data) {
 
 function handleUpdate(data) {
   try {
-    const sheet = getSheet(data.sheetId);
+    const sheet = getSheet(data.sheetId, data.spreadsheetId);
     if (!sheet) {
       return createResponse(false, 'Sheet not found', null);
     }
@@ -248,7 +248,7 @@ function handleUpdate(data) {
 
 function handleDelete(data) {
   try {
-    const sheet = getSheet(data.sheetId);
+    const sheet = getSheet(data.sheetId, data.spreadsheetId);
     if (!sheet) {
       return createResponse(false, 'Sheet not found', null);
     }
@@ -273,7 +273,7 @@ function handleDelete(data) {
 
 function handleCreateSheet(data) {
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const ss = data.spreadsheetId ? SpreadsheetApp.openById(data.spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
     const sheetName = data.sheetId;
     
     // 시트 생성
@@ -330,7 +330,7 @@ function handleGenerateResubmit(data) {
 
 function handleGetSubmissions(params) {
   try {
-    const sheet = getSheet(params.sheetId);
+    const sheet = getSheet(params.sheetId, params.spreadsheetId);
     if (!sheet) {
       return createResponse(false, 'Sheet not found', null);
     }
@@ -355,7 +355,7 @@ function handleGetSubmissions(params) {
 
 function handleGetStats(params) {
   try {
-    const sheet = getSheet(params.sheetId);
+    const sheet = getSheet(params.sheetId, params.spreadsheetId);
     if (!sheet) {
       return createResponse(false, 'Sheet not found', null);
     }
@@ -556,8 +556,8 @@ function handleGetStudents(params) {
 // 유틸리티 함수
 // ============================================
 
-function getOrCreateSheet(sheetId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function getOrCreateSheet(sheetId, spreadsheetId) {
+  const ss = spreadsheetId ? SpreadsheetApp.openById(spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
   let sheet = ss.getSheetByName(sheetId);
   
   if (!sheet) {
@@ -567,8 +567,8 @@ function getOrCreateSheet(sheetId) {
   return sheet;
 }
 
-function getSheet(sheetId) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+function getSheet(sheetId, spreadsheetId) {
+  const ss = spreadsheetId ? SpreadsheetApp.openById(spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
   return ss.getSheetByName(sheetId);
 }
 

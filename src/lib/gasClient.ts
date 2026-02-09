@@ -136,22 +136,22 @@ async function gasGet<T = any>(action: string, params: any): Promise<GASResponse
 /**
  * 제출 데이터를 GAS로 전송
  */
-export async function submitToGAS(data: SubmissionData): Promise<GASResponse> {
+export async function submitToGAS(data: SubmissionData & { spreadsheetId?: string }): Promise<GASResponse> {
     return gasPost('submit', data);
 }
 
 /**
  * 제출 현황 조회
  */
-export async function getSubmissions(sheetId: string): Promise<GASResponse<any[]>> {
-    return gasGet('get-submissions', { sheetId });
+export async function getSubmissions(sheetId: string, spreadsheetId?: string): Promise<GASResponse<any[]>> {
+    return gasGet('get-submissions', { sheetId, spreadsheetId });
 }
 
 /**
  * 통계 조회
  */
-export async function getStats(sheetId: string): Promise<GASResponse<any>> {
-    return gasGet('get-stats', { sheetId });
+export async function getStats(sheetId: string, spreadsheetId?: string): Promise<GASResponse<any>> {
+    return gasGet('get-stats', { sheetId, spreadsheetId });
 }
 
 /**
@@ -164,7 +164,7 @@ export async function getStudents(sheetId: string): Promise<GASResponse<any[]>> 
 /**
  * 제출 데이터 수정
  */
-export async function updateSubmission(data: UpdateData): Promise<GASResponse> {
+export async function updateSubmission(data: UpdateData & { spreadsheetId?: string }): Promise<GASResponse> {
     return gasPost('update', data);
 }
 
@@ -174,12 +174,14 @@ export async function updateSubmission(data: UpdateData): Promise<GASResponse> {
 export async function deleteSubmission(
     sheetId: string,
     submissionId: number,
-    editor: string
+    editor: string,
+    spreadsheetId?: string
 ): Promise<GASResponse> {
     return gasPost('delete', {
         sheetId,
         submissionId,
         editor,
+        spreadsheetId,
     });
 }
 
@@ -188,11 +190,13 @@ export async function deleteSubmission(
  */
 export async function createSheet(
     sheetId: string,
-    headers?: string[]
+    headers?: string[],
+    spreadsheetId?: string
 ): Promise<GASResponse<{ sheetId: string; sheetUrl: string }>> {
     return gasPost('create-sheet', {
         sheetId,
         headers,
+        spreadsheetId,
     });
 }
 

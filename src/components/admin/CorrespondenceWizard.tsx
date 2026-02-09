@@ -17,6 +17,7 @@ import docStats from '@/lib/doc_stats.json';
 import Tesseract from 'tesseract.js';
 import { generateSheetId, createSheet } from '@/lib/gasClient';
 import { uploadDocument } from '@/lib/docService';
+import { getSchoolConfig } from '@/lib/schoolConfig';
 import ActiveDocumentViewer from './ActiveDocumentViewer';
 
 // --- Types ---
@@ -544,20 +545,22 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
         };
 
         // Create Sheet in GAS (Async, don't block)
-        createSheet(newDoc.sheetId, newDoc.formItems.map(i => i.label)).catch(console.error);
+        const schoolCfg = getSchoolConfig();
+        createSheet(newDoc.sheetId, newDoc.formItems.map(i => i.label), schoolCfg.submissionSpreadsheetId).catch(console.error);
 
         const savedDocs = JSON.parse(localStorage.getItem('gatong_docs') || '[]');
         savedDocs.push(newDoc);
         localStorage.setItem('gatong_docs', JSON.stringify(savedDocs));
+
+        // Auto-register to dashboard IMMEDIATELY
+        onSuccess(newDoc);
+
         setTempDoc(newDoc);
         setIsSheetCreating(false);
         setStep('completed');
 
         // Clear Draft
         sessionStorage.removeItem('gatong_wizard_draft');
-
-        // Auto-register to dashboard
-        // onSuccess(newDoc); // Removed to allow summary screen to show
     };
 
     const getTargetSummary = () => {
@@ -1114,7 +1117,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                                 className="w-full py-4 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white rounded-[2rem] font-black text-xl shadow-2xl shadow-indigo-600/30 flex items-center justify-center gap-4 transition-all duration-300 transform hover:scale-[1.02] active:scale-[0.98] group"
                                             >
                                                 <Send size={28} className="transition-transform group-hover:translate-x-1 group-hover:-translate-y-1" />
-                                                {initialData ? '변동 사항 저장' : '발송 목록에 추가'}
+                                                {initialData ? '변동 사항 저장' : '취합 등록'}
                                             </button>
                                         </div>
                                     </motion.section>
