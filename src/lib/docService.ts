@@ -7,7 +7,14 @@ export interface UploadResult {
     data?: any;
 }
 
-export async function uploadDocument(file: File, deadline?: string, formSchema: any[] = []): Promise<UploadResult> {
+export async function uploadDocument(
+    file: File,
+    deadline?: string,
+    formSchema: any[] = [],
+    customTitle?: string,
+    customType?: string,
+    content?: string
+): Promise<UploadResult> {
     try {
         const metadata = parseDocumentName(file.name);
         const fileExt = file.name.split('.').pop();
@@ -34,8 +41,9 @@ export async function uploadDocument(file: File, deadline?: string, formSchema: 
             .from('documents')
             .insert([
                 {
-                    title: metadata.title,
-                    type: metadata.type,
+                    title: customTitle || metadata.title,
+                    type: customType || metadata.type,
+                    content: content || null,
                     path: publicUrl,
                     status: 'ongoing',
                     deadline: deadline || null,

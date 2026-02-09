@@ -7,13 +7,17 @@ import {
     Sparkles, Plus, Trash2, ChevronRight, Layout, Check, AlignLeft,
     Copy, Search, MousePointer2, Wand2, PenTool, Smartphone, QrCode, Download,
     Users, Calendar, Clock, Share2, MessageCircle, FileImage, ExternalLink,
-    Minus, Sheet, UserPlus, Table2, Send, ListChecks, ZoomIn
+    Minus, Sheet, UserPlus, Table2, Send, ListChecks, ZoomIn,
+    Heart, Phone, Map, ShieldCheck, HeartPulse
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { SURVEY_PRESETS } from '@/lib/constants/surveyPresets';
 import docStats from '@/lib/doc_stats.json';
 import Tesseract from 'tesseract.js';
 import { generateSheetId, createSheet } from '@/lib/gasClient';
+import { uploadDocument } from '@/lib/docService';
+import ActiveDocumentViewer from './ActiveDocumentViewer';
 
 // --- Types ---
 type Step = 'input' | 'processing' | 'completed';
@@ -57,6 +61,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
     // 1. File & Basic Info
     const [file, setFile] = useState<File | null>(null);
     const [title, setTitle] = useState(initialData?.title || '');
+    const [content, setContent] = useState(initialData?.content || '');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [showTitleHint, setShowTitleHint] = useState(false);
     const [titleCandidates, setTitleCandidates] = useState<string[]>([]); // 추천 후보
@@ -127,6 +132,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
 
                 // Restore Basic Info
                 if (draft.title) setTitle(draft.title);
+                if (draft.content) setContent(draft.content);
                 if (draft.docType) setDocType(draft.docType);
                 if (draft.step) setStep(draft.step);
 
@@ -173,6 +179,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
             const draft: any = {
                 step,
                 title,
+                content,
                 docType,
                 formItems,
                 targetCategory,
@@ -385,19 +392,41 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
 
     // ... Form Builder Helpers ...
     const addFormItem = (type: FormItem['type']) => {
-        setFormItems(prev => [...prev, {
-            id: Date.now().toString(),
-            type,
-            label: type === 'text' ? '새 주관식 질문' : '새 객관식 질문',
-            options: type === 'radio' ? ['옵션1', '옵션2'] : undefined,
-            required: true
-        }]);
+        setFormItems(prev => {
+            const newItem = {
+                id: Date.now().toString(),
+                type,
+                label: type === 'text' ? '새 주관식 질문' : '새 객관식 질문',
+                options: type === 'radio' ? ['옵션1', '옵션2'] : undefined,
+                required: true
+            };
+            const sig = prev.find(i => i.type === 'signature');
+            const others = prev.filter(i => i.type !== 'signature');
+            return [...others, newItem, ...(sig ? [sig] : [])];
+        });
     };
     const updateFormItem = (id: string, update: Partial<FormItem>) => {
         setFormItems(prev => prev.map(item => item.id === id ? { ...item, ...update } : item));
     };
     const removeFormItem = (id: string) => {
         setFormItems(prev => prev.filter(item => item.id !== id));
+    };
+
+    const applyPreset = (presetId: string) => {
+        const preset = SURVEY_PRESETS.find(p => p.id === presetId);
+        if (!preset) return;
+
+        const newItems = preset.items.map(item => ({
+            ...item,
+            id: (Date.now() + Math.random()).toString(),
+        }));
+
+        setFormItems(prev => {
+            // Keep signature at the bottom
+            const sig = prev.find(i => i.type === 'signature');
+            const others = prev.filter(i => i.type !== 'signature');
+            return [...others, ...newItems, ...(sig ? [sig] : [])];
+        });
     };
 
     // ... Deadline Helpers ...
@@ -478,11 +507,29 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                 console.error("File read error", e);
             }
         }
+        let finalDocData = null;
+        if (file) {
+            const uploadResult = await uploadDocument(
+                file,
+                deadline.toISOString(),
+                formItems,
+                title,
+                docType === 'action' ? 'action' : 'notice',
+                content
+            );
+            if (uploadResult.success) {
+                finalDocData = uploadResult.data;
+            } else {
+                console.error("Supabase upload failed, falling back to local storage only:", uploadResult.error);
+            }
+        }
+
         const newDoc = {
-            id: Date.now().toString(),
+            id: finalDocData?.id || Date.now().toString(),
             title: title,
+            content: content,
             type: docType === 'action' ? 'action' : 'notice',
-            created_at: new Date().toISOString(),
+            created_at: finalDocData?.created_at || new Date().toISOString(),
             status: 'ongoing',
             submitted_count: 0,
             total_count: calculateTotalTarget(),
@@ -490,10 +537,10 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
             formItems: formItems,
             sheetUrl: "https://docs.google.com/spreadsheets/d/mock-sheet-id",
             targetSummary: getTargetSummary(),
-            path: fileData as string, // Use Base64 as path for immediate preview
+            path: finalDocData?.path || fileData as string, // Use Supabase URL if available, else Base64
             fileData: fileData,
             fileType: file?.type,
-            sheetId: generateSheetId('school_2025', new Date().getFullYear(), Date.now().toString())
+            sheetId: generateSheetId('school_2025', new Date().getFullYear(), (finalDocData?.id || Date.now().toString()).slice(0, 8))
         };
 
         // Create Sheet in GAS (Async, don't block)
@@ -510,7 +557,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
         sessionStorage.removeItem('gatong_wizard_draft');
 
         // Auto-register to dashboard
-        onSuccess(newDoc);
+        // onSuccess(newDoc); // Removed to allow summary screen to show
     };
 
     const getTargetSummary = () => {
@@ -538,7 +585,7 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
 
     const handleCopyText = () => {
         const url = `${window.location.origin}/s/${tempDoc?.id}`;
-        const text = `[가정통신문] ${title}\n\n학부모님, 가정에 행복이 가득하시길 바랍니다.\n자녀의 학교 생활 관련 중요 안내입니다.\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${url}`;
+        const text = `[가정통신문] ${title}\n\n${randomGreeting}\n\n${content}\n\n📅 마감: ${formattedDeadline}까지\n📄 내용 확인 및 서명하기:\n${url}\n\n늘 감사드립니다 🙏`;
         navigator.clipboard.writeText(text);
         alert("쿨알림톡용 텍스트가 복사되었습니다.");
     };
@@ -589,20 +636,48 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                             </div>
 
                             {/* Link Box */}
-                            <div className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-5 space-y-4 text-left">
-                                <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-2">
-                                    <MessageCircle size={14} /> 쿨알림톡 전달용 메시지
+                            <div className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-6 space-y-6 text-left">
+                                <h4 className="text-xs font-bold text-indigo-400 flex items-center gap-2 uppercase tracking-widest">
+                                    <Sparkles size={14} /> 생성된 통신문 요약
                                 </h4>
-                                <div className="bg-[var(--color-background)]/[0.05] rounded-xl p-4 text-xs text-[var(--color-muted-foreground)] leading-relaxed font-mono whitespace-pre-wrap border border-[var(--color-border)]">
-                                    {`[가정통신문] ${title}\n\n안녕하세요, 학부모님 💙\n자녀의 성장을 함께 응원하는 학교에서 안내드립니다.\n\n📅 편하게 응답해 주시면 감사하겠습니다: ${formattedDeadline}까지\n📱 아래 링크에서 내용 확인 후 서명 부탁드립니다:\n${typeof window !== 'undefined' ? window.location.origin : ''}/s/${tempDoc.id}\n\n늘 감사드립니다 🙏`}
+
+                                <div className="space-y-4">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-[var(--color-muted-foreground)] font-bold uppercase tracking-tight">인사말</span>
+                                        <p className="text-sm font-medium text-[var(--color-foreground)]">{randomGreeting}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-[var(--color-muted-foreground)] font-bold uppercase tracking-tight">제목</span>
+                                        <p className="text-sm font-black text-indigo-500">{title}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-[var(--color-muted-foreground)] font-bold uppercase tracking-tight">내용</span>
+                                        <p className="text-sm text-[var(--color-muted-foreground)] leading-relaxed">{content || '내용이 입력되지 않았습니다.'}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-[var(--color-muted-foreground)] font-bold uppercase tracking-tight">제출 마감</span>
+                                        <p className="text-sm font-bold text-rose-500 flex items-center gap-1.5"><Clock size={12} /> {formattedDeadline}</p>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-[var(--color-muted-foreground)] font-bold uppercase tracking-tight">신청 링크</span>
+                                        <p className="text-[11px] font-mono text-indigo-400 bg-indigo-500/5 p-2 rounded-lg border border-indigo-500/10 truncate">
+                                            {typeof window !== 'undefined' ? window.location.origin : ''}/s/${tempDoc.id}
+                                        </p>
+                                    </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={handleCopyText} className="py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
-                                        <Copy size={14} /> 텍스트 복사
-                                    </button>
-                                    <button onClick={() => setShowFullPreview(true)} className="py-3 bg-[var(--color-background)]/[0.05] hover:bg-[var(--color-background)]/[0.1] text-[var(--color-foreground)] rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all border border-[var(--color-border)]">
-                                        <Smartphone size={14} /> 미리보기
-                                    </button>
+
+                                <div className="pt-4 border-t border-[var(--color-border)] space-y-3">
+                                    <p className="text-[11px] text-[var(--color-muted-foreground)] flex items-center gap-2">
+                                        <Copy size={12} /> 쿨알림톡 전달용 메시지 구성
+                                    </p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <button onClick={handleCopyText} className="py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                                            <Copy size={14} /> 메시지 복사
+                                        </button>
+                                        <button onClick={() => setShowFullPreview(true)} className="py-3 bg-[var(--color-background)]/[0.05] hover:bg-[var(--color-background)]/[0.1] text-[var(--color-foreground)] rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all border border-[var(--color-border)]">
+                                            <Smartphone size={14} /> 모바일 미리보기
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 
@@ -709,6 +784,20 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                             </AnimatePresence>
                                         </div>
                                     </div>
+                                    <div className="space-y-6">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-1.5 h-6 bg-indigo-600 rounded-full" />
+                                            <h3 className="text-xl font-black text-[var(--color-foreground)] tracking-tight">전달 내용 (선택)</h3>
+                                        </div>
+                                        <div className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl focus-within:border-indigo-600/50 transition-all p-4">
+                                            <textarea
+                                                value={content}
+                                                onChange={e => setContent(e.target.value)}
+                                                placeholder="학부모님께 전달할 간단한 메시지를 입력해주세요. (예: 이번 현장체험학습은 안전을 최우선으로 진행됩니다.)"
+                                                className="w-full bg-transparent border-none outline-none text-sm text-[var(--color-foreground)] placeholder:text-[var(--color-muted-foreground)] resize-none h-24"
+                                            />
+                                        </div>
+                                    </div>
                                 </section>
 
                                 {/* SECTION 2: FORM BUILDER */}
@@ -724,50 +813,94 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                                                 <h3 className="text-xl font-black text-[var(--color-foreground)] tracking-tight">항목 구성 설정</h3>
                                             </div>
                                         </div>
+
+                                        {/* Quick Presets */}
                                         <div className="space-y-4">
-                                            {formItems.map((item) => (
-                                                <motion.div key={item.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-6 space-y-4 hover:border-indigo-600/30 transition-all shadow-sm">
-                                                    <div className="flex items-center gap-4">
-                                                        <div className="p-3 bg-indigo-600/10 rounded-2xl text-indigo-600">
-                                                            {item.type === 'text' ? <AlignLeft size={20} /> : <ListChecks size={20} />}
-                                                        </div>
-                                                        <input
-                                                            value={item.label}
-                                                            onChange={(e) => updateFormItem(item.id, { label: e.target.value })}
-                                                            placeholder="질문 내용을 입력하세요"
-                                                            className="flex-1 bg-transparent border-none outline-none text-[var(--color-foreground)] font-black text-lg placeholder:text-[var(--color-muted-foreground)]"
-                                                        />
-                                                    </div>
-                                                    {item.options && (
-                                                        <div className="ml-16 space-y-3">
-                                                            {item.options.map((opt, optIdx) => (
-                                                                <div key={optIdx} className="flex items-center gap-3 group">
-                                                                    <div className="w-2 h-2 rounded-full bg-[var(--color-border)] group-focus-within:bg-indigo-600 transition-colors" />
-                                                                    <input
-                                                                        value={opt}
-                                                                        onChange={(e) => {
-                                                                            const newOptions = [...(item.options || [])];
-                                                                            newOptions[optIdx] = e.target.value;
-                                                                            updateFormItem(item.id, { options: newOptions });
-                                                                        }}
-                                                                        className="flex-1 bg-transparent text-sm text-[var(--color-muted-foreground)] outline-none border-b border-[var(--color-border)] focus:border-indigo-500/50 py-1 transition-colors placeholder:text-[var(--color-muted-foreground)]/50"
-                                                                        placeholder={`옵션 ${optIdx + 1}`}
-                                                                    />
-                                                                </div>
-                                                            ))}
+                                            <p className="text-[12px] font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-2 mb-2">
+                                                <Wand2 size={14} /> 전문가 추천 프리셋 (한 번에 추가)
+                                            </p>
+                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                                {SURVEY_PRESETS.map((preset) => {
+                                                    const Icon = {
+                                                        CheckCircle2,
+                                                        Stethoscope: HeartPulse,
+                                                        Phone,
+                                                        Map,
+                                                        ShieldCheck
+                                                    }[preset.icon] || Sparkles;
+
+                                                    return (
+                                                        <button
+                                                            key={preset.id}
+                                                            onClick={() => applyPreset(preset.id)}
+                                                            className="flex flex-col items-start p-4 bg-[var(--color-background)]/[0.05] border border-[var(--color-border)] rounded-2xl hover:border-indigo-500/50 hover:bg-indigo-500/5 transition-all text-left group"
+                                                        >
+                                                            <div className="w-8 h-8 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-500 mb-3 group-hover:scale-110 transition-transform">
+                                                                <Icon size={18} />
+                                                            </div>
+                                                            <div className="text-[13px] font-black text-[var(--color-foreground)] mb-1">{preset.name}</div>
+                                                            <div className="text-[10px] text-[var(--color-muted-foreground)] leading-tight">{preset.description}</div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-4">
+                                            {formItems
+                                                .sort((a, b) => (a.type === 'signature' ? 1 : b.type === 'signature' ? -1 : 0))
+                                                .map((item) => (
+                                                    <motion.div key={item.id} layout initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-[var(--color-background)]/[0.03] border border-[var(--color-border)] rounded-2xl p-6 space-y-4 hover:border-indigo-600/30 transition-all shadow-sm group/item relative">
+                                                        {item.type !== 'signature' && (
                                                             <button
-                                                                onClick={() => {
-                                                                    const newOptions = [...(item.options || []), ''];
-                                                                    updateFormItem(item.id, { options: newOptions });
-                                                                }}
-                                                                className="text-[11px] text-indigo-400 hover:text-indigo-300 font-black uppercase tracking-widest mt-2 flex items-center gap-1.5"
+                                                                onClick={() => removeFormItem(item.id)}
+                                                                className="absolute top-4 right-4 p-2 bg-rose-500/10 text-rose-500 rounded-lg opacity-0 group-hover/item:opacity-100 transition-all hover:bg-rose-500 hover:text-white"
                                                             >
-                                                                <Plus size={12} /> 옵션 추가
+                                                                <Trash2 size={16} />
                                                             </button>
+                                                        )}
+                                                        <div className="flex items-center gap-4">
+                                                            <div className="p-3 bg-indigo-600/10 rounded-2xl text-indigo-600">
+                                                                {item.type === 'text' ? <AlignLeft size={20} /> : item.type === 'signature' ? <PenTool size={20} /> : <ListChecks size={20} />}
+                                                            </div>
+                                                            <input
+                                                                value={item.label}
+                                                                onChange={(e) => updateFormItem(item.id, { label: e.target.value })}
+                                                                placeholder="질문 내용을 입력하세요"
+                                                                className="flex-1 bg-transparent border-none outline-none text-[var(--color-foreground)] font-black text-lg placeholder:text-[var(--color-muted-foreground)]"
+                                                                readOnly={item.type === 'signature'}
+                                                            />
                                                         </div>
-                                                    )}
-                                                </motion.div>
-                                            ))}
+                                                        {item.options && (
+                                                            <div className="ml-16 space-y-3">
+                                                                {item.options.map((opt, optIdx) => (
+                                                                    <div key={optIdx} className="flex items-center gap-3 group">
+                                                                        <div className="w-2 h-2 rounded-full bg-[var(--color-border)] group-focus-within:bg-indigo-600 transition-colors" />
+                                                                        <input
+                                                                            value={opt}
+                                                                            onChange={(e) => {
+                                                                                const newOptions = [...(item.options || [])];
+                                                                                newOptions[optIdx] = e.target.value;
+                                                                                updateFormItem(item.id, { options: newOptions });
+                                                                            }}
+                                                                            className="flex-1 bg-transparent text-sm text-[var(--color-muted-foreground)] outline-none border-b border-[var(--color-border)] focus:border-indigo-500/50 py-1 transition-colors placeholder:text-[var(--color-muted-foreground)]/50"
+                                                                            placeholder={`옵션 ${optIdx + 1}`}
+                                                                        />
+                                                                    </div>
+                                                                ))}
+                                                                <button
+                                                                    onClick={() => {
+                                                                        const newOptions = [...(item.options || []), ''];
+                                                                        updateFormItem(item.id, { options: newOptions });
+                                                                    }}
+                                                                    className="text-[11px] text-indigo-400 hover:text-indigo-300 font-black uppercase tracking-widest mt-2 flex items-center gap-1.5"
+                                                                >
+                                                                    <Plus size={12} /> 옵션 추가
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </motion.div>
+                                                ))}
                                         </div>
                                         <div className="flex items-center gap-3 px-1 text-[13px] text-indigo-600 font-black">
                                             <AlertCircle size={16} />
@@ -1076,57 +1209,61 @@ export default function CorrespondenceWizard({ onSuccess, onCancel, onDraftUpdat
                 }
             </AnimatePresence>
 
-            {/* FULL PREVIEW MODAL */}
+            {/* FULL PREVIEW MODAL (Smartphone Frame) */}
             <AnimatePresence>
                 {
-                    showFullPreview && previewUrl && (
+                    showFullPreview && (
                         <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
-                            className="fixed inset-0 z-[100] bg-[var(--color-background)]/90 backdrop-blur-md flex flex-col p-4 md:p-10"
+                            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex flex-col items-center justify-center p-4"
                             onClick={() => setShowFullPreview(false)}
                         >
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="text-[var(--color-foreground)] font-black text-xl truncate max-w-[300px]">{file?.name}</h3>
+                            <div className="absolute top-6 right-6 z-[110]">
                                 <button
                                     onClick={() => setShowFullPreview(false)}
-                                    className="w-10 h-10 bg-[var(--color-background)]/[0.1] hover:bg-[var(--color-background)]/[0.2] text-[var(--color-foreground)] rounded-full flex items-center justify-center transition-all border border-[var(--color-border)]"
+                                    className="w-12 h-12 bg-white/10 hover:bg-white/20 text-white rounded-full flex items-center justify-center transition-all backdrop-blur-md border border-white/10"
                                 >
-                                    <X size={24} />
+                                    <X size={28} />
                                 </button>
                             </div>
-                            <div className="flex-1 w-full max-w-5xl mx-auto rounded-3xl overflow-hidden bg-white shadow-2xl relative border border-[var(--color-border)]" onClick={e => e.stopPropagation()}>
-                                {file?.type.startsWith('image/') ? (
-                                    <div className="w-full h-full overflow-auto flex items-start justify-center p-4">
-                                        <img src={previewUrl} alt="Full Preview" className="max-w-none w-full h-auto" />
+
+                            <motion.div
+                                initial={{ scale: 0.9, y: 20, opacity: 0 }}
+                                animate={{ scale: 1, y: 0, opacity: 1 }}
+                                exit={{ scale: 0.9, y: 20, opacity: 0 }}
+                                className="w-full h-full max-w-lg flex flex-col items-center justify-center"
+                                onClick={e => e.stopPropagation()}
+                            >
+                                {tempDoc || initialData ? (
+                                    <div className="w-full h-full">
+                                        <ActiveDocumentViewer
+                                            document={tempDoc || initialData}
+                                            students={[]}
+                                            submissions={[]}
+                                            activeTab="preview"
+                                            hideHeader={true}
+                                        />
+                                    </div>
+                                ) : previewUrl ? (
+                                    <div className="w-full h-full max-w-4xl bg-white rounded-3xl overflow-hidden shadow-2xl flex flex-col">
+                                        <div className="flex-1 overflow-auto">
+                                            {file?.type.startsWith('image/') ? (
+                                                <img src={previewUrl} alt="Preview" className="w-full h-auto" />
+                                            ) : (
+                                                <iframe src={`${previewUrl}#toolbar=0`} className="w-full h-full border-0" title="PDF Preview" />
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
-                                    <iframe
-                                        src={`${previewUrl}#toolbar=0`}
-                                        className="w-full h-full border-0"
-                                        title="Full PDF Preview"
-                                    />
+                                    <div className="text-white">미리보기 데이터를 불러올 수 없습니다.</div>
                                 )}
-                            </div>
-                            <div className="mt-6 flex justify-center">
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        const link = document.createElement('a');
-                                        link.href = previewUrl;
-                                        link.download = file?.name || 'document';
-                                        link.click();
-                                    }}
-                                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-8 py-4 rounded-2xl font-black flex items-center gap-2 shadow-xl active:scale-[0.95] transition-all"
-                                >
-                                    <Download size={20} /> 기기에 저장하기 (다운로드)
-                                </button>
-                            </div>
+                            </motion.div>
                         </motion.div>
                     )
                 }
-            </AnimatePresence >
+            </AnimatePresence>
         </div >
     );
 }
